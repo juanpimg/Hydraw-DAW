@@ -1,0 +1,11 @@
+build/
+cmake-build-*/
+extern/
+plugins/
+*.o
+*.obj
+*.exe
+bin/
+.cache/
+.DS_Store
+imgui.ini
