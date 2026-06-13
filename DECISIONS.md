@@ -142,3 +142,41 @@ El audio callback escribe/lee datos desde variables atómicas (`std::atomic`) y 
 - Máximo 16 pistas (constante `MAX_TRACKS`), limitación de V1.
 - RemoveTrack desplaza pistas (cambio de índice), lo que puede desorientar al usuario si hay muchas pistas.
 - El master channel en el mixer se muestra como un canal adicional separado visualmente.
+
+---
+
+## ADR-009: Migración de UI — ImGui/GLFW → WebView (WebKit2GTK)
+
+**Contexto**: La UI con Dear ImGui + GLFW + OpenGL 3 era funcional pero se veía anticuada y dificultaba la creación de una interfaz profesional tipo Ableton. Se necesitaba una UI moderna, desacoplada del motor de audio.
+
+**Decisión**: Se reemplaza ImGui/GLFW/OpenGL por `webview::webview` (WebKit2GTK + GTK3). La UI pasa a ser HTML5+TailwindCSS+vanilla JS, comunicándose con C++ mediante 22 bindings nativos (`w.bind`/`eval`).
+
+**Consecuencias**:
+- UI profesional con HTML/CSS/JS, sin toolchain frontend (Tailwind CDN).
+- WebKit2GTK 2.52.3 requiere `libwebkit2gtk-4.1-dev`.
+- La comunicación C++↔JS es síncrona y webview parsea JSON automáticamente.
+- Binding sin `JSON.parse()` en JS — webview ya devuelve JS nativo.
+- Void C++ debe devolver `"null"` (JSON válido), no `""`.
+- Se añade `g_pageReady` guard para evitar eval() antes del DOMContentLoaded.
+- Buena práctica: `safeStoi`/`safeStof` en bindings para evitar crashes.
+
+---
+
+## ADR-010: UI Dark Theme Profesional (Ableton‑inspirado)
+
+**Contexto**: La UI original usaba colores planos con contraste insuficiente (texto `#3a4050`, `#333`, `#445` sobre fondos oscuros) y tipografía monoespaciada, resultando ilegible.
+
+**Decisión**: Diseño oscuro con paleta de alto contraste basada en Ableton Live/Bitwig:
+- Fondo `#141418` (no negro puro) para reducir halación.
+- Texto primario `#e4e4e8`, secundario `#a0a0b0`, terciario `#68687a`.
+- Tipografía sistema sans-serif, tamaños +1-2px.
+- Acabados: bordes sutiles `#2a2a34`, hover states `#1e1e2a`/`#30303c`.
+- Colores funcionales: azul `#5599ff` (selección), verde `#44bb66` (audio), amarillo `#eebb44` (solo/playhead), rojo `#ee4444` (mute/arm).
+
+**Consecuencias**:
+- WCAG AA para todo texto (≥4.5:1).
+- Waveform canvas usa `rgba(130,150,190,0.6)`.
+- Playhead y ruler más visibles.
+- Faders verticales con thumb circular azul.
+- Layout más espacioso (transport 44px, tracks 48px).
+- Scrollbar más ancha (7px) con hover.
