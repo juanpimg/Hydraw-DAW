@@ -37,6 +37,7 @@ public:
     // Clip positioning
     void setClipStart(int trackIndex, uint64_t pos);
     void swapTrackAudio(int t1, int t2);
+    void moveTrackAudio(int src, int dst);
 
     // Dynamic tracks
     int addTrack();

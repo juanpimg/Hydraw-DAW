@@ -17,11 +17,7 @@ html,body{
 ::-webkit-scrollbar-thumb{background:#2a2a36;border-radius:4px}
 ::-webkit-scrollbar-thumb:hover{background:#3a3a48}
 ::selection{background:#1a3a5c;color:#fff}
-
-/* ── LAYOUT ── */
-#app{display:grid;grid-template-rows:44px 1fr 1fr;height:100vh;user-select:none}
-
-/* ── TRANSPORT ── */
+#app{display:grid;grid-template-rows:44px 1fr;height:100vh;user-select:none}
 #transport{
   display:flex;align-items:center;gap:6px;padding:0 14px;
   background:#1a1a20;border-bottom:1px solid #2a2a34;
@@ -33,33 +29,49 @@ html,body{
 }
 #transport button:hover{background:#30303c;color:#d0d0e0}
 #transport button.playing{background:#1a3055;color:#5599ff}
+#btn-play{min-width:44px;text-align:center}
 #transport .time{
   font-size:14px;color:#c0c0c8;min-width:90px;margin-left:auto;
   font-variant-numeric:tabular-nums;
 }
 #transport .status{font-size:10px;color:#4a4a5a;letter-spacing:2px;font-weight:700;min-width:44px}
 #transport .status.on{color:#5599ff}
-
-/* ── TIMELINE ── */
-#main{display:grid;grid-template-rows:1fr 1fr;overflow:hidden}
-#tl-wrap{display:flex;flex-direction:column;overflow:hidden;border-bottom:1px solid #2a2a34}
+#transport .sm-btn{
+  cursor:pointer;border:none;border-radius:4px;padding:2px 6px;
+  font-size:9px;line-height:1.4;font-family:inherit;
+  background:#1e1e28;color:#686880;transition:all 0.1s;
+}
+#transport .sm-btn:hover{background:#262632;color:#a0a0b0}
+#transport .sm-btn.on{background:#1a2a40;color:#77aaff}
+#main{display:flex;flex-direction:column;overflow:hidden}
+#tl-wrap{flex:1;display:flex;flex-direction:column;overflow:hidden;border-bottom:1px solid #2a2a34}
+#divider{height:5px;min-height:5px;cursor:row-resize;background:#1e1e26;flex-shrink:0}
+#divider:hover{background:#2a2a36}
+#bottom{overflow:hidden;flex-shrink:0;min-height:120px;max-height:70vh}
 #ruler{
   height:24px;background:#141418;border-bottom:1px solid #2a2a34;
   position:relative;flex-shrink:0;
 }
 #ruler canvas{display:block;width:100%}
-#track-list{flex:1;overflow-y:auto}
-.track{
-  display:flex;height:48px;border-bottom:1px solid #1e1e26;cursor:pointer;
-  transition:background 0.08s;
-}
-.track:hover{background:#16161e}
-.track.sel{background:#1a1a26}
-.track.sel .th{background:#1c1c2a}
-.track .th{
-  min-width:140px;max-width:140px;display:flex;align-items:center;
-  padding:0 8px;gap:4px;border-right:1px solid #2a2a34;background:#16161e;
-}
+#tl-scrollbar{height:10px;background:#141418;flex-shrink:0;position:relative}
+#tl-scrollbar input[type=range]{width:calc(100% - 140px);height:10px;margin:0;padding:0;-webkit-appearance:none;appearance:none;background:transparent;display:block;position:absolute;top:0;left:140px}
+#tl-scrollbar input[type=range]::-webkit-slider-runnable-track{height:4px;background:#1e1e28;border-radius:2px;margin-top:3px}
+#tl-scrollbar input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:10px;height:10px;border-radius:50%;background:#5599ff;border:none;margin-top:-3px;cursor:pointer}
+  #track-list{flex:1;overflow-y:auto}
+  #track-list.drag-enter{background:rgba(85,153,255,0.04)}
+  .track{
+    display:flex;height:48px;border-bottom:1px solid #1e1e26;cursor:pointer;
+    transition:background 0.08s;
+  }
+  .track:hover{background:#16161e}
+  .track.sel{background:#1a1a26}
+  .track.sel .th{background:#1c1c2a}
+  .track.drag-over{background:rgba(85,153,255,0.12)}
+  .track.drag-over .clip{border:1px dashed #5599ff;border-radius:6px}
+  .track .th{
+    min-width:140px;max-width:140px;display:flex;align-items:center;
+    padding:0 8px;gap:4px;border-right:1px solid #2a2a34;background:#16161e;
+  }
 .track .th .tn{
   font-size:12px;color:#d0d0d8;white-space:nowrap;overflow:hidden;
   text-overflow:ellipsis;flex:1
@@ -79,8 +91,20 @@ html,body{
   position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);
   color:#484858;font-size:11px;pointer-events:none;
 }
-
-/* ── BOTTOM PANELS ── */
+.clip-block{
+  position:absolute;top:3px;bottom:3px;border-radius:4px;
+  background:rgba(85,153,255,0.08);
+  cursor:grab;overflow:hidden;z-index:2;min-width:12px;
+}
+.clip-scroll{position:absolute;top:0;left:0;right:0;bottom:0}
+.clip-block.dragging{opacity:0.75;z-index:10;cursor:grabbing}
+.clip-block .clip-label{
+  position:absolute;bottom:2px;left:6px;font-size:9px;
+  color:rgba(200,200,220,0.6);white-space:nowrap;overflow:hidden;
+  text-overflow:ellipsis;max-width:calc(100% - 12px);pointer-events:none;z-index:1;
+}
+.track.drag-target{background:rgba(85,153,255,0.1)}
+.track.drag-target .clip{border:1px dashed #5599ff;border-radius:6px}
 #bottom{display:grid;grid-template-columns:180px 1fr 280px;overflow:hidden}
 .panel{display:flex;flex-direction:column;border-right:1px solid #2a2a34;overflow:hidden}
 .panel:last-child{border-right:none}
@@ -89,8 +113,6 @@ html,body{
   background:#1a1a20;border-bottom:1px solid #2a2a34;
   letter-spacing:1.5px;font-weight:700;flex-shrink:0;
 }
-
-/* ── BROWSER ── */
 #browser-list{flex:1;overflow-y:auto;padding:4px}
 #browser-list .item{padding:4px 8px;cursor:pointer;border-radius:4px;color:#a0a0b0;font-size:11px}
 #browser-list .item:hover{background:#1e1e2a;color:#e0e0e8}
@@ -98,8 +120,7 @@ html,body{
 #browser-list .item.dir:hover{color:#88bbdd}
 #browser-list .item.audio{color:#66bb88}
 #browser-list .item.audio:hover{color:#88ddaa}
-
-/* ── FX CHAIN ── */
+#browser-error{color:#ee4444;font-size:10px;padding:4px 8px;display:none}
 #fx .row{display:flex;align-items:center;gap:10px;padding:5px 10px}
 #fx .row label{color:#a0a0b0;min-width:28px;font-size:11px}
 #fx .row input[type=range]{flex:1;max-width:130px;height:4px;border-radius:3px;background:#1e1e28}
@@ -115,8 +136,8 @@ html,body{
 #plugin-list .pl .pb.bypassed{color:#44bb66}
 #plugin-list .pl .px{color:#4a3838;cursor:pointer;font-size:14px;transition:color 0.1s}
 #plugin-list .pl .px:hover{color:#ee4444}
-
-/* ── MIXER ── */
+#plugin-list .pl .pg{color:#5599ff;cursor:pointer;font-size:11px;font-weight:700;transition:color 0.1s;margin-right:2px}
+#plugin-list .pl .pg:hover{color:#88bbff}
 #mixer-scroll{flex:1;overflow-x:auto;overflow-y:hidden}
 #mixer-channels{display:flex;height:100%}
 .ch{
@@ -131,10 +152,10 @@ html,body{
   transition:height 0.05s;
   background:linear-gradient(to top,#30c860 0%,#e0b020 60%,#e03030 85%);
 }
-.ch .fw{flex:1;display:flex;align-items:center;justify-content:center}
+.ch .fw{flex:1;display:flex;align-items:stretch;justify-content:center;min-height:0}
 .ch .fw input[type=range]{
   writing-mode:bt-lr;-webkit-appearance:slider-vertical;appearance:slider-vertical;
-  width:20px;height:100%;background:#14141c;border-radius:4px;
+  width:20px;flex:1;min-height:0;background:#14141c;border-radius:4px;
 }
 .ch .fw input[type=range]::-webkit-slider-runnable-track{width:4px;background:#1e1e28;border-radius:3px}
 .ch .fw input[type=range]::-webkit-slider-thumb{
@@ -152,8 +173,29 @@ html,body{
 .ch .cbs button.on-m{color:#ee4444;border-color:#4a2020;background:#1a0e0e}
 .ch .cbs button.on-s{color:#eebb44;border-color:#4a3a10;background:#1a1408}
 .ch .cbs button.on-a{color:#ee4444;border-color:#4a2020;background:#1a0e0e}
-
-/* ── POPUP ── */
+#mixer-body{display:flex;flex:1;overflow:hidden}
+#master-channel{
+  width:72px;flex-shrink:0;border-left:2px solid #2a2a36;
+  display:flex;flex-direction:column;align-items:center;padding:4px 2px;background:#1a1a22;
+}
+.master-cn{font-size:10px;color:#c0c0d0;margin:2px 0;font-weight:700;letter-spacing:0.5px;white-space:nowrap}
+.master-strip{flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;width:100%;min-height:50px}
+.master-mc{width:14px;flex:1;background:#14141c;border-radius:3px;position:relative;overflow:hidden}
+.master-mf{position:absolute;bottom:0;left:0;width:100%;border-radius:3px;
+  transition:height 0.05s;
+  background:linear-gradient(to top,#30c860 0%,#e0b020 60%,#e03030 85%);
+}
+.master-fw{flex:1;display:flex;align-items:stretch;justify-content:center;min-height:0;width:100%}
+.master-fw input[type=range]{
+  writing-mode:bt-lr;-webkit-appearance:slider-vertical;appearance:slider-vertical;
+  width:20px;flex:1;min-height:0;background:#14141c;border-radius:4px;
+}
+.master-fw input[type=range]::-webkit-slider-runnable-track{width:4px;background:#1e1e28;border-radius:3px}
+.master-fw input[type=range]::-webkit-slider-thumb{
+  -webkit-appearance:none;width:16px;height:16px;border-radius:50%;
+  background:#5599ff;border:2px solid #16161e;cursor:pointer;margin-left:-6px;
+}
+.master-db{font-size:9px;color:#68687a;margin:2px 0;font-variant-numeric:tabular-nums}
 #popup-bg{display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.6);z-index:100}
 #popup{
   display:none;position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);
@@ -169,9 +211,10 @@ html,body{
 <div id="app">
   <div id="transport">
     <button id="btn-play" onclick="togglePlay()">&#9654;</button>
-    <button id="btn-stop" onclick="callNative('nativeStop')">&#9632;</button>
+    <button id="btn-stop" onclick="cn('nativeStop')">&#9632;</button>
     <span class="time" id="time">00:00.000</span>
     <span class="status" id="status">STOP</span>
+    <button class="sm-btn on" id="btn-scroll-mode" onclick="toggleScrollMode()" title="Scroll mode">C</button>
     <button style="margin-left:auto" onclick="addTrack()">+Track</button>
     <button onclick="removeTrack()">-Track</button>
     <span style="font-size:10px;color:#444" id="track-count">1 track</span>
@@ -180,12 +223,15 @@ html,body{
   <div id="main">
     <div id="tl-wrap">
       <div id="ruler"><canvas id="ruler-cv"></canvas></div>
+      <div id="tl-scrollbar"><input type="range" id="tl-scroll-range" min="0" value="0"></div>
       <div id="track-list"></div>
     </div>
-    <div id="bottom">
+    <div id="divider"></div>
+    <div id="bottom" style="height:220px">
       <div class="panel" id="browser">
         <div class="ph">BROWSER</div>
         <div id="browser-path" style="font-size:10px;color:#8888a0;padding:3px 8px;border-bottom:1px solid #2a2a34;overflow:hidden;white-space:nowrap"></div>
+        <div id="browser-error"></div>
         <div id="browser-list"></div>
       </div>
       <div class="panel" id="fx">
@@ -203,7 +249,22 @@ html,body{
       </div>
       <div class="panel" id="mixer">
         <div class="ph">MIXER</div>
-        <div id="mixer-scroll"><div id="mixer-channels"></div></div>
+        <div id="mixer-body">
+          <div id="mixer-scroll"><div id="mixer-channels"></div></div>
+          <div id="master-channel">
+            <div class="master-ch">
+              <span class="master-cn">Master</span>
+              <div class="master-strip">
+                <div class="master-mc"><div class="master-mf" id="master-vu" style="height:0%"></div></div>
+                <div class="master-fw">
+                  <input type="range" id="master-fd" min="0" max="1.5" step="0.01" value="1"
+                         oninput="onMasterFader(this.value)" ondblclick="this.value=1;onMasterFader(1)">
+                </div>
+              </div>
+              <span class="master-db" id="master-db">+0.0 dB</span>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   </div>
@@ -213,324 +274,1263 @@ html,body{
 <div id="popup"></div>
 
 <script>
-var STATE={playing:false,playhead:0,trackCount:1,sel:0,peaks:[],volumes:[],mutes:[],solos:[],arms:[],names:[],audioFrames:[],clipStarts:[],peakCaches:[],browserPath:'',pluginsCache:[],initialized:false};
-var lastUpdate=0;
-
-function cn(name,arg){
-  try{
-    var fn=window[name];
-    if(!fn)return null;
-    return arg===undefined?fn(''):fn(String(arg));
-  }catch(e){return null;}
+// ── EXHAUSTIVE LOGGING ──
+var LOG_LEVELS = { DEBUG:0, INFO:1, WARN:2, ERROR:3 };
+var LOG_CURRENT = LOG_LEVELS.DEBUG;
+var LOG_BATCH = [];
+var LOG_FLUSH_MS = 1000;
+function log(level, label, msg) {
+  var lv = LOG_LEVELS[level];
+  if (lv === undefined || lv < LOG_CURRENT) return;
+  var t = new Date();
+  var ts = t.toTimeString().slice(0,8) + '.' + String(t.getMilliseconds()).padStart(3,'0');
+  var fn = lv >= LOG_LEVELS.ERROR ? console.error :
+           lv >= LOG_LEVELS.WARN  ? console.warn  : console.log;
+  fn('[' + ts + '] [' + level + '] [' + label + '] ' + msg);
+  // Relay WARN+ to C++ log file (batched to avoid spamming)
+  if (lv >= LOG_LEVELS.WARN) {
+    LOG_BATCH.push(level + ',' + label + ',' + msg.replace(/,/g,';'));
+    if (LOG_BATCH.length >= 10) flushLogBatch();
+  }
+}
+function flushLogBatch() {
+  if (LOG_BATCH.length === 0) return;
+  var batch = LOG_BATCH.splice(0, LOG_BATCH.length);
+  var fn = window.nativeLog;
+  if (fn) { try { fn(batch.join('|')); } catch(e) {} }
+}
+setInterval(flushLogBatch, LOG_FLUSH_MS);
+function showError(msg) {
+  log('ERROR', 'UI', msg);
+  var el = document.getElementById('browser-error');
+  if (el) { el.textContent = 'ERROR: ' + msg; el.style.display = 'block'; }
 }
 
-function updateUIFromNative(d){
-  if(Date.now()-lastUpdate<25)return;lastUpdate=Date.now();
-  STATE.playing=!!d.playing;STATE.playhead=d.playhead||0;STATE.trackCount=d.trackCount||1;
-  STATE.peaks=d.trackPeaks||[];STATE.volumes=d.volumes||[];STATE.mutes=d.mutes||[];STATE.solos=d.solos||[];STATE.arms=d.arms||[];
-  STATE.names=d.trackNames||[];STATE.audioFrames=d.audioFrames||[];STATE.clipStarts=d.clipStarts||[];STATE.peakCaches=d.peakCaches||[];
-  if(STATE.sel>=STATE.trackCount)STATE.sel=Math.max(0,STATE.trackCount-1);
-  updateTransport();updateTime();updateMixer();updateFxPanel();drawRuler();
-  if(!STATE.initialized){initBrowser();STATE.initialized=true;}
-}
-window.onNativeUpdate=updateUIFromNative;
+// ── STATE ──
+var STATE = {
+  playing: false, playhead: 0, trackCount: 1, sel: 0,
+  peaks: [], masterPeakL: 0, masterPeakR: 0,
+  volumes: [], mutes: [], solos: [], arms: [],
+  names: [], audioFrames: [], clipStarts: [], peakCaches: [],
+  browserPath: '', pluginsCache: [], initialized: false, tracksRendered: false
+};
+var lastUpdate = 0;
 
-function updateTransport(){
-  var b=document.getElementById('btn-play'),s=document.getElementById('status');
-  b.innerHTML=STATE.playing?'&#9646;&#9646;':'&#9654;';
-  b.classList.toggle('playing',STATE.playing);
-  s.textContent=STATE.playing?'PLAY':'STOP';
-  s.classList.toggle('on',STATE.playing);
-  document.getElementById('track-count').textContent=STATE.trackCount+' track'+(STATE.trackCount!==1?'s':'');
+// ── NATIVE BRIDGE ──
+// webview v0.12 bindings return Promises, so cn() returns the Promise.
+// cn() → returns Promise of the native result
+// cn.then(name, arg, callback) → convenience for Promise.then()
+function cn(name, arg) {
+  try {
+    var fn = window[name];
+    if (!fn) {
+      log('WARN', 'BRIDGE', 'Function "' + name + '" not found on window');
+      return null;
+    }
+    var input = arg === undefined ? '' : String(arg);
+    log('DEBUG', 'BRIDGE', name + '(' + input.slice(0,80) + ')');
+    var promise = fn(input);
+    if (promise && typeof promise.then === 'function') {
+      promise.then(function(result) {
+        log('DEBUG', 'BRIDGE', name + ' resolved: ' + (result === null || result === undefined ? 'null' : String(JSON.stringify(result)).slice(0,120)));
+      });
+    }
+    return promise;
+  } catch(e) {
+    log('ERROR', 'BRIDGE', name + ' exception: ' + (e.message || e));
+    return null;
+  }
 }
-function updateTime(){
-  var secs=STATE.playhead/48000;
-  var m=Math.floor(secs/60),s=Math.floor(secs%60),ms=Math.floor((secs-Math.floor(secs))*1000);
-  document.getElementById('time').textContent=String(m).padStart(2,'0')+':'+String(s).padStart(2,'0')+'.'+String(ms).padStart(3,'0');
-}
-function togglePlay(){cn(STATE.playing?'nativePause':'nativePlay')}
 
-function addTrack(){
-  var n=cn('nativeAddTrack');
-  if(typeof n==='number'&&n>=0){STATE.trackCount++;renderAll();}
+// ── NATIVE UPDATE LOOP ──
+function updateUIFromNative(d) {
+  if (Date.now() - lastUpdate < 25) return;
+  lastUpdate = Date.now();
+
+  if (!d || typeof d !== 'object') {
+    log('WARN', 'LOOP', 'Received invalid data from native');
+    return;
+  }
+
+  STATE.playing = !!d.playing;
+  STATE.playhead = d.playhead || 0;
+  STATE.trackCount = d.trackCount || 1;
+  STATE.peaks = d.trackPeaks || [];
+  STATE.masterPeakL = d.masterPeakL || 0;
+  STATE.masterPeakR = d.masterPeakR || 0;
+  STATE.volumes = d.volumes || [];
+  STATE.mutes = d.mutes || [];
+  STATE.solos = d.solos || [];
+  STATE.arms = d.arms || [];
+  STATE.names = d.trackNames || [];
+  STATE.audioFrames = d.audioFrames || [];
+  STATE.clipStarts = d.clipStarts || [];
+  // peakCaches NOT from telemetry (too large; fetched separately via nativeGetPeakCache)
+
+  refreshPeaks();
+  STATE.masterVolume = d.masterVolume !== undefined ? d.masterVolume : 1;
+
+  if (STATE.sel >= STATE.trackCount)
+    STATE.sel = Math.max(0, STATE.trackCount - 1);
+
+  // Update names, M/S/A button states, and drop-hints
+  for (var i = 0; i < STATE.trackCount; i++) {
+    var tn = document.getElementById('tn-' + i);
+    if (tn) tn.textContent = (STATE.names[i] || 'Track ' + (i+1)).substring(0, 14);
+    var cn = document.getElementById('cn-' + i);
+    if (cn) cn.textContent = (STATE.names[i] || 'Ch ' + (i+1)).substring(0, 8);
+    var dh = document.getElementById('dh-' + i);
+    if (dh) dh.style.display = STATE.audioFrames[i] > 0 ? 'none' : '';
+    // Track header M/S/A
+    var tbm = document.getElementById('tbm-' + i);
+    if (tbm) tbm.className = 'tb' + (STATE.mutes[i] ? ' on-m' : '');
+    var tbs = document.getElementById('tbs-' + i);
+    if (tbs) tbs.className = 'tb' + (STATE.solos[i] ? ' on-s' : '');
+    var tba = document.getElementById('tba-' + i);
+    if (tba) tba.className = 'tb' + (STATE.arms[i] ? ' on-a' : '');
+    // Mixer M/S/A
+    var mbm = document.getElementById('mbm-' + i);
+    if (mbm) mbm.className = STATE.mutes[i] ? ' on-m' : '';
+    var mbs = document.getElementById('mbs-' + i);
+    if (mbs) mbs.className = STATE.solos[i] ? ' on-s' : '';
+    var mba = document.getElementById('mba-' + i);
+    if (mba) mba.className = STATE.arms[i] ? ' on-a' : '';
+  }
+
+  updateTransport();
+  updateTime();
+  updateMixer();
+  updateMaster();
+  updateFxPanel();
+  autoScrollTimeline();
+  updateScrollbar();
+  drawRuler();
+  drawAllWaveforms();
+
+  // BUGFIX: Render tracks + mixer on first telemetry push
+  if (!STATE.tracksRendered) {
+    log('INFO', 'LOOP', 'First telemetry received — rendering tracks & mixer');
+    renderTrackList();
+    renderMixerChannels();
+    STATE.tracksRendered = true;
+  }
+
+  // Re-render track list after clip move/setClipStart (C++ atomics now synced)
+  if (STATE._needsTrackRender) {
+    renderTrackList();
+    STATE._needsTrackRender = false;
+  }
+
+  if (!STATE.initialized) {
+    log('INFO', 'LOOP', 'Initializing browser...');
+    initBrowser();
+    STATE.initialized = true;
+  }
 }
-function removeTrack(){
-  var tc=STATE.trackCount;
-  if(tc<=1)return;
-  cn('nativeRemoveTrack',String(tc-1));
-  STATE.trackCount--;if(STATE.sel>=STATE.trackCount)STATE.sel=STATE.trackCount-1;
+window.onNativeUpdate = updateUIFromNative;
+
+// ── TRANSPORT ──
+function togglePlay() {
+  var cmd = STATE.playing ? 'nativePause' : 'nativePlay';
+  log('INFO', 'TRANSPORT', cmd);
+  cn(cmd);
+}
+
+function updateTransport() {
+  var b = document.getElementById('btn-play');
+  var s = document.getElementById('status');
+  if (!b || !s) return;
+  b.innerHTML = STATE.playing ? '&#9646;&#9646;' : '&#9654;';
+  b.classList.toggle('playing', STATE.playing);
+  s.textContent = STATE.playing ? 'PLAY' : 'STOP';
+  s.classList.toggle('on', STATE.playing);
+  var tc = document.getElementById('track-count');
+  if (tc) tc.textContent = STATE.trackCount + ' track' + (STATE.trackCount !== 1 ? 's' : '');
+}
+
+function updateTime() {
+  var el = document.getElementById('time');
+  if (!el) return;
+  var secs = STATE.playhead / 48000;
+  var m = Math.floor(secs / 60);
+  var s = Math.floor(secs % 60);
+  var ms = Math.floor((secs - Math.floor(secs)) * 1000);
+  el.textContent = String(m).padStart(2,'0') + ':' + String(s).padStart(2,'0') + '.' + String(ms).padStart(3,'0');
+}
+
+// ── TRACK MANAGEMENT ──
+function addTrack() {
+  var p = cn('nativeAddTrack');
+  if (p && typeof p.then === 'function') {
+    p.then(function(n) {
+      if (typeof n === 'number' && n >= 0) {
+        log('INFO', 'TRACK', 'Added track ' + n);
+        STATE.trackCount++;
+        renderAll();
+      } else {
+        showError('Could not add track (limit reached?)');
+      }
+    });
+  }
+}
+
+function removeTrack() {
+  var tc = STATE.trackCount;
+  if (tc <= 1) {
+    log('WARN', 'TRACK', 'Cannot remove last track');
+    showError('Cannot remove the last track');
+    return;
+  }
+  var idx = STATE.sel;
+  log('INFO', 'TRACK', 'Removing track ' + idx);
+  cn('nativeRemoveTrack', String(idx));
+  STATE.trackCount--;
+  if (STATE.sel >= STATE.trackCount) STATE.sel = STATE.trackCount - 1;
   renderAll();
 }
 
-function doMute(i){cn('nativeSetMute',i+','+(STATE.mutes[i]?'0':'1'));}
-function doSolo(i){cn('nativeSetSolo',i+','+(STATE.solos[i]?'0':'1'));}
-function doArm(i){cn('nativeSetArm',i+','+(STATE.arms[i]?'0':'1'));}
+function selectTrack(i) {
+  log('DEBUG', 'TRACK', 'Select track ' + i);
+  STATE.sel = i;
+  renderTrackList();
+  updateFxPanel();
+}
+
+function doMute(i) {
+  STATE.mutes[i] = !STATE.mutes[i];
+  log('INFO', 'TRACK', 'Mute track ' + i + ' -> ' + (STATE.mutes[i] ? '1' : '0'));
+  cn('nativeSetMute', i + ',' + (STATE.mutes[i] ? '1' : '0'));
+}
+function doMute(i) {
+  STATE.mutes[i] = !STATE.mutes[i];
+  log('INFO', 'TRACK', 'Mute track ' + i + ' -> ' + (STATE.mutes[i] ? '1' : '0'));
+  cn('nativeSetMute', i + ',' + (STATE.mutes[i] ? '1' : '0'));
+}
+var _savedMutes = null;
+function doSolo(i) {
+  if (STATE.solos[i]) {
+    // Solo being deactivated — restore saved mutes
+    STATE.solos[i] = false;
+    if (_savedMutes) {
+      for (var j = 0; j < STATE.trackCount; j++) {
+        if (STATE.mutes[j] !== _savedMutes[j]) {
+          STATE.mutes[j] = _savedMutes[j];
+          cn('nativeSetMute', j + ',' + (_savedMutes[j] ? '1' : '0'));
+        }
+      }
+      _savedMutes = null;
+    }
+  } else {
+    // Solo activated — remove solo from any other track
+    for (var j = 0; j < STATE.trackCount; j++) {
+      if (j !== i && STATE.solos[j]) {
+        STATE.solos[j] = false;
+        cn('nativeSetSolo', j + ',' + '0');
+      }
+    }
+    STATE.solos[i] = true;
+    _savedMutes = STATE.mutes.slice();
+    // Mute all except this track, unmute this one
+    for (var j = 0; j < STATE.trackCount; j++) {
+      var newMute = (j !== i);
+      if (STATE.mutes[j] !== newMute) {
+        STATE.mutes[j] = newMute;
+        cn('nativeSetMute', j + ',' + (newMute ? '1' : '0'));
+      }
+    }
+  }
+
+  cn('nativeSetSolo', i + ',' + (STATE.solos[i] ? '1' : '0'));
+  log('INFO', 'TRACK', 'Solo track ' + i + ' -> ' + (STATE.solos[i] ? '1' : '0'));
+}
+function doArm(i) {
+  STATE.arms[i] = !STATE.arms[i];
+  log('INFO', 'TRACK', 'Arm track ' + i + ' -> ' + (STATE.arms[i] ? '1' : '0'));
+  cn('nativeSetArm', i + ',' + (STATE.arms[i] ? '1' : '0'));
+}
 
 // ── TIMELINE ──
-function renderTrackList(){
-  var list=document.getElementById('track-list');
-  var html='';
-  for(var i=0;i<STATE.trackCount;i++){
-    var n=STATE.names[i]||('Track '+(i+1));
-    var sel=i===STATE.sel?' sel':'';
-    var mc=STATE.mutes[i]?' on-m':'',sc=STATE.solos[i]?' on-s':'',ac=STATE.arms[i]?' on-a':'';
-    var hasAudio=STATE.audioFrames[i]>0;
-    html+=
-      '<div class="track'+sel+'" onclick="selectTrack('+i+')">'+
-        '<div class="th">'+
-          '<span class="tn">'+escHtml(n.substring(0,14))+'</span>'+
-          '<span class="tb'+mc+'" onclick="event.stopPropagation();doMute('+i+')">M</span>'+
-          '<span class="tb'+sc+'" onclick="event.stopPropagation();doSolo('+i+')">S</span>'+
-          '<span class="tb'+ac+'" onclick="event.stopPropagation();doArm('+i+')">A</span>'+
-        '</div>'+
-        '<div class="clip" id="clip-'+i+'">'+
-          (hasAudio?'':'<span class="drop-hint">Drop WAV/MP3 here</span>')+
-          '<canvas class="wf" id="wf-'+i+'"></canvas>'+
-        '</div>'+
+var _tlScrollX = 0;
+var _dragInProgress = false;
+var _playheadTargetFraction = -1;
+var _scrollMode = 'continuous'; // 'continuous' | 'page'
+
+function renderTrackList() {
+  var list = document.getElementById('track-list');
+  if (!list) { log('WARN', 'UI', 'track-list element not found'); return; }
+  var html = '';
+  var pxPerSec = 80;
+  var sr = 48000;
+  for (var i = 0; i < STATE.trackCount; i++) {
+    var n = STATE.names[i] || ('Track ' + (i + 1));
+    var sel = i === STATE.sel ? ' sel' : '';
+    var mc = STATE.mutes[i] ? ' on-m' : '';
+    var sc = STATE.solos[i] ? ' on-s' : '';
+    var ac = STATE.arms[i] ? ' on-a' : '';
+    var hasAudio = STATE.audioFrames[i] > 0;
+    var clipBlock = '';
+    if (hasAudio) {
+      var clipX = Math.round((STATE.clipStarts[i] / sr) * pxPerSec);
+      var clipW = Math.round((STATE.audioFrames[i] / sr) * pxPerSec);
+      clipBlock = '<div class="clip-scroll" id="cs-' + i + '">' +
+        '<div class="clip-block" id="cb-' + i + '" data-track="' + i + '" style="left:' + clipX + 'px;width:' + Math.max(20, clipW) + 'px">' +
+          '<canvas class="wf" id="wf-' + i + '"></canvas>' +
+          '<span class="clip-label">' + escHtml((_clipNames[i] || n).substring(0, 20)) + '</span>' +
+        '</div></div>';
+    }
+    html +=
+      '<div class="track' + sel + '" data-track-id="' + i + '" onclick="selectTrack(' + i + ')">' +
+        '<div class="th">' +
+          '<span class="tn" id="tn-' + i + '">' + escHtml(n.substring(0, 14)) + '</span>' +
+          '<span class="tb' + mc + '" id="tbm-' + i + '" onclick="event.stopPropagation();doMute(' + i + ')">M</span>' +
+          '<span class="tb' + sc + '" id="tbs-' + i + '" onclick="event.stopPropagation();doSolo(' + i + ')">S</span>' +
+          '<span class="tb' + ac + '" id="tba-' + i + '" onclick="event.stopPropagation();doArm(' + i + ')">A</span>' +
+        '</div>' +
+        '<div class="clip" id="clip-' + i + '">' +
+          clipBlock +
+          '<span class="drop-hint" id="dh-' + i + '">Drop WAV/MP3 here</span>' +
+        '</div>' +
       '</div>';
   }
-  list.innerHTML=html;
+  html +=
+    '<div class="track add-track" onclick="addTrack()" title="Add track">' +
+      '<div class="th" style="cursor:pointer;justify-content:center">' +
+        '<span style="color:#686880;font-size:16px;font-weight:700">+</span>' +
+      '</div>' +
+      '<div class="clip" style="display:flex;align-items:center;justify-content:center;color:#484858;font-size:11px">Add Track</div>' +
+    '</div>';
+  list.innerHTML = html;
+  applyTimelineScroll();
   drawAllWaveforms();
+  initClipDrag();
+  STATE._needsTrackRender = false;
+  log('DEBUG', 'UI', 'renderTrackList: ' + STATE.trackCount + ' tracks');
 }
-function escHtml(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
 
-function selectTrack(i){STATE.sel=i;renderTrackList();updateFxPanel();}
+function escHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
 
-function drawRuler(){
-  var c=document.getElementById('ruler-cv'),p=document.getElementById('ruler');
-  var w=p.clientWidth||800;
-  c.width=w;c.height=22;
-  var ctx=c.getContext('2d');
-  ctx.fillStyle='#141418';ctx.fillRect(0,0,w,24);
-  ctx.strokeStyle='#2a2a34';ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(0,23.5);ctx.lineTo(w,23.5);ctx.stroke();
-  var pxPerSec=80;
-  for(var s=0;s<=w/pxPerSec+2;s++){
-    var x=120+s*pxPerSec;
-    ctx.strokeStyle='#222230';ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(x,14);ctx.lineTo(x,24);ctx.stroke();
-    ctx.fillStyle='#68687a';ctx.font='9px -apple-system,BlinkMacSystemFont,sans-serif';
-    ctx.fillText(s+'s',x+3,11);
+function drawRuler() {
+  var c = document.getElementById('ruler-cv');
+  var p = document.getElementById('ruler');
+  if (!c || !p) return;
+  var w = p.clientWidth || 800;
+  c.width = w; c.height = 22;
+  var ctx = c.getContext('2d');
+  ctx.fillStyle = '#141418'; ctx.fillRect(0, 0, w, 24);
+  ctx.strokeStyle = '#2a2a34'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(0, 23.5); ctx.lineTo(w, 23.5); ctx.stroke();
+  var pxPerSec = 80;
+  var rulerOff = 140;
+  var scrollOff = _tlScrollX || 0;
+  var firstSec = Math.floor(scrollOff / pxPerSec);
+  var lastSec = Math.ceil((w + scrollOff) / pxPerSec) + 1;
+  for (var s = firstSec; s <= lastSec; s++) {
+    var x = rulerOff + s * pxPerSec - scrollOff;
+    if (x < rulerOff - 20 || x > w + 20) continue;
+    ctx.strokeStyle = '#222230'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(x, 14); ctx.lineTo(x, 24); ctx.stroke();
+    ctx.fillStyle = '#68687a'; ctx.font = '9px -apple-system,BlinkMacSystemFont,sans-serif';
+    ctx.fillText(s + 's', x + 3, 11);
   }
-  var phx=120+(STATE.playhead/48000)*pxPerSec;
-  ctx.strokeStyle='#eebb44';ctx.lineWidth=1.5;
-  ctx.beginPath();ctx.moveTo(phx,0);ctx.lineTo(phx,24);ctx.stroke();
-  ctx.fillStyle='#eebb44';ctx.beginPath();ctx.moveTo(phx,0);ctx.lineTo(phx-4,9);ctx.lineTo(phx+4,9);ctx.fill();
+  var phx = rulerOff + (STATE.playhead / 48000) * pxPerSec - scrollOff;
+  if (phx >= rulerOff && phx <= c.width) {
+    ctx.strokeStyle = '#eebb44'; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.moveTo(phx, 0); ctx.lineTo(phx, 24); ctx.stroke();
+    ctx.fillStyle = '#eebb44'; ctx.beginPath(); ctx.moveTo(phx, 0); ctx.lineTo(phx - 4, 9); ctx.lineTo(phx + 4, 9); ctx.fill();
+  }
 }
 
-function drawAllWaveforms(){
-  for(var i=0;i<STATE.trackCount;i++){
-    if(!(STATE.audioFrames[i]>0))continue;
-    var pc=STATE.peakCaches[i];
-    if(!pc||!pc.length)continue;
-    var c=document.getElementById('wf-'+i);
-    var area=document.getElementById('clip-'+i);
-    if(!c||!area)continue;
-    var w=area.clientWidth-10,h=area.clientHeight-6;
-    if(w<10||h<4)continue;
-    c.width=w;c.height=h;
-    c.style.left='5px';c.style.top='3px';c.style.width=w+'px';c.style.height=h+'px';
-    var ctx=c.getContext('2d');
-    ctx.clearRect(0,0,w,h);
-    var mid=h/2,amp=h*0.42,bars=Math.min(pc.length,200);
-    for(var b=0;b<bars;b++){
-      var idx=Math.floor(b/bars*pc.length);
-      if(idx>=pc.length)idx=pc.length-1;
-      var mx=Math.min(pc[idx]*amp,amp);
-      var bx=b*w/bars;
-      ctx.strokeStyle='rgba(130,150,190,0.6)';
-      ctx.lineWidth=1;
-      ctx.beginPath();ctx.moveTo(bx,mid-mx);ctx.lineTo(bx,mid+mx);ctx.stroke();
+// Click on ruler to seek
+document.getElementById('ruler').addEventListener('click', function(e) {
+  var rect = this.getBoundingClientRect();
+  var x = e.clientX - rect.left;
+  var pxPerSec = 80;
+  var rulerOff = 140;
+  var c = document.getElementById('ruler-cv');
+  if (STATE.playing && c) {
+    var viewW = c.width - rulerOff;
+    if (viewW > 0) {
+      _playheadTargetFraction = Math.max(0, Math.min(1, (x - rulerOff) / viewW));
+    }
+  }
+  var secs = Math.max(0, (x - rulerOff + (_tlScrollX || 0)) / pxPerSec);
+  var samples = Math.floor(secs * 48000);
+  log('INFO', 'TIMELINE', 'Seek to ' + secs.toFixed(2) + 's (' + samples + ' samples)');
+  cn('nativeSetPlayhead', String(samples));
+});
+
+// ── TIMELINE SCROLL ──
+function getTotalTimelineWidth() {
+  var pxPerSec = 80;
+  var sr = 48000;
+  var maxEnd = 0;
+  for (var i = 0; i < STATE.trackCount; i++) {
+    var end = ((STATE.clipStarts[i] || 0) + STATE.audioFrames[i]) / sr * pxPerSec + 140;
+    if (end > maxEnd) maxEnd = end;
+  }
+  var c = document.getElementById('ruler-cv');
+  var viewW = c ? c.width : 800;
+  return Math.max(viewW + 1, maxEnd + 160);
+}
+
+function updateScrollbar() {
+  var range = document.getElementById('tl-scroll-range');
+  if (!range) return;
+  var totalW = getTotalTimelineWidth();
+  var c = document.getElementById('ruler-cv');
+  var viewW = c ? c.width : 800;
+  var maxScroll = Math.max(0, totalW - viewW);
+  range.max = maxScroll || 1;
+  range.value = Math.min(_tlScrollX, maxScroll);
+}
+
+function applyTimelineScroll() {
+  var totalW = getTotalTimelineWidth();
+  var c = document.getElementById('ruler-cv');
+  var viewW = c ? c.width : 800;
+  var maxScroll = Math.max(0, totalW - viewW);
+  if (_tlScrollX > maxScroll) _tlScrollX = maxScroll;
+  var els = document.querySelectorAll('.clip-scroll');
+  for (var i = 0; i < els.length; i++) {
+    els[i].style.transform = 'translateX(-' + _tlScrollX + 'px)';
+  }
+  updateScrollbar();
+  drawRuler();
+}
+
+function toggleScrollMode() {
+  _scrollMode = _scrollMode === 'continuous' ? 'page' : 'continuous';
+  var btn = document.getElementById('btn-scroll-mode');
+  if (btn) {
+    btn.textContent = _scrollMode === 'continuous' ? 'C' : 'P';
+    btn.classList.toggle('on', _scrollMode === 'continuous');
+    btn.title = _scrollMode === 'continuous' ? 'Continuous scroll' : 'Page scroll';
+  }
+  _playheadTargetFraction = -1;
+  log('INFO', 'TIMELINE', 'Scroll mode: ' + _scrollMode);
+}
+
+function autoScrollTimeline() {
+  if (_dragInProgress) return;
+  var c = document.getElementById('ruler-cv');
+  if (!c) return;
+  var pxPerSec = 80;
+  var rulerOff = 140;
+  var phAbs = rulerOff + (STATE.playhead / 48000) * pxPerSec;
+  var viewW = c.width - rulerOff;
+  if (viewW <= 0) return;
+
+  if (!STATE.playing) {
+    _playheadTargetFraction = -1;
+    return;
+  }
+
+  if (_scrollMode === 'continuous') {
+    // Capture anchor fraction when play starts (or recapture on play)
+    if (_playheadTargetFraction < 0) {
+      _playheadTargetFraction = (phAbs - _tlScrollX - rulerOff) / viewW;
+      _playheadTargetFraction = Math.max(0, Math.min(1, _playheadTargetFraction));
+    }
+    var targetScroll = Math.max(0, phAbs - rulerOff - viewW * _playheadTargetFraction);
+    var totalW = getTotalTimelineWidth();
+    var maxScroll = Math.max(0, totalW - c.width);
+    targetScroll = Math.min(targetScroll, maxScroll);
+    if (Math.abs(targetScroll - _tlScrollX) > 2) {
+      _tlScrollX = targetScroll;
+      applyTimelineScroll();
+    }
+  } else {
+    // Page mode: playhead travels across the screen; when it reaches the
+    // right edge the viewport jumps one full page and the playhead returns
+    // to the left edge.
+    var phVisible = phAbs - _tlScrollX;
+    var pageMargin = 80; // 1 second before right edge
+    var totalW = getTotalTimelineWidth();
+    var maxScroll = Math.max(0, totalW - c.width);
+    if (phVisible > rulerOff + viewW - pageMargin && _tlScrollX < maxScroll) {
+      // Jump so the playhead lands exactly at rulerOff (left edge of content).
+      // The amount = distance from playhead to left edge = phVisible − rulerOff.
+      _tlScrollX = Math.min(_tlScrollX + (phVisible - rulerOff), maxScroll);
+      applyTimelineScroll();
+    }
+  }
+}
+
+// Scrollbar input listener
+(function() {
+  var range = document.getElementById('tl-scroll-range');
+  if (!range) return;
+  range.addEventListener('input', function() {
+    _tlScrollX = parseFloat(this.value) || 0;
+    applyTimelineScroll();
+  });
+})();
+
+function refreshPeaks() {
+  for (var i = 0; i < STATE.trackCount; i++) {
+    if (STATE.audioFrames[i] > 0 && (!STATE.peakCaches[i] || !STATE.peakCaches[i].length)) {
+      (function(idx) {
+        cn('nativeGetPeakCache', String(idx)).then(function(peaks) {
+          STATE.peakCaches[idx] = peaks || [];
+          drawAllWaveforms();
+        });
+      })(i);
+    }
+  }
+}
+
+function drawAllWaveforms() {
+  for (var i = 0; i < STATE.trackCount; i++) {
+    if (!(STATE.audioFrames[i] > 0)) continue;
+    var pc = STATE.peakCaches[i];
+    if (!pc || !pc.length) {
+      log('DEBUG', 'WF', 'Track ' + i + ' has audioFrames=' + STATE.audioFrames[i] + ' but peakCaches[i] is empty');
+      continue;
+    }
+    var c = document.getElementById('wf-' + i);
+    if (!c) continue;
+    var parent = c.parentElement;
+    if (!parent) continue;
+    var w = parent.clientWidth, h = parent.clientHeight;
+    if (w < 4 || h < 4) continue;
+    c.width = w; c.height = h;
+    c.style.left = '0'; c.style.top = '0';
+    c.style.width = w + 'px'; c.style.height = h + 'px';
+    var ctx = c.getContext('2d');
+    ctx.clearRect(0, 0, w, h);
+    var mid = h / 2, amp = h * 0.4, bars = Math.max(1, pc.length);
+    ctx.strokeStyle = 'rgba(130,150,190,0.6)'; ctx.lineWidth = 1;
+    for (var b = 0; b < bars; b++) {
+      var idx = Math.floor(b / bars * pc.length);
+      if (idx >= pc.length) idx = pc.length - 1;
+      var mx = Math.min(pc[idx] * amp, amp);
+      var bx = b * w / bars;
+      ctx.beginPath(); ctx.moveTo(bx, mid - mx); ctx.lineTo(bx, mid + mx); ctx.stroke();
     }
   }
 }
 
 // ── BROWSER ──
-function loadBrowser(path){
-  var entries=cn('nativeListDir',path);
-  STATE.browserPath=path;
-  document.getElementById('browser-path').textContent=path.length>50?'...'+path.slice(-47):path;
-  var list=document.getElementById('browser-list');
-  var html='<div class="item dir" onclick="parentDir()">..</div>';
-  if(entries&&Array.isArray(entries)){
-    entries.sort(function(a,b){
-      if(a.dir&&!b.dir)return-1;if(!a.dir&&b.dir)return 1;
-      return a.name.localeCompare(b.name);
+function loadBrowser(path) {
+  log('INFO', 'BROWSER', 'Loading directory: ' + path);
+  var errEl = document.getElementById('browser-error');
+  if (errEl) errEl.style.display = 'none';
+  STATE.browserPath = path;
+  var pathEl = document.getElementById('browser-path');
+  if (pathEl) pathEl.textContent = path.length > 50 ? '...' + path.slice(-47) : path;
+  var list = document.getElementById('browser-list');
+  if (!list) { log('ERROR', 'BROWSER', 'browser-list element not found'); return; }
+  list.innerHTML = '<div style="color:#555;padding:8px;font-size:11px">Loading...</div>';
+
+  var p = cn('nativeListDir', path);
+  if (p && typeof p.then === 'function') {
+    p.then(function(entries) {
+      if (!entries || !Array.isArray(entries)) {
+        log('WARN', 'BROWSER', 'nativeListDir returned: ' + JSON.stringify(entries));
+        list.innerHTML = '<div style="color:#ee4444;padding:8px;font-size:11px">Error loading directory</div>';
+        return;
+      }
+      var html = '<div class="item dir" onclick="parentDir()">..</div>';
+      entries.sort(function(a, b) {
+        if (a.dir && !b.dir) return -1;
+        if (!a.dir && b.dir) return 1;
+        return (a.name || '').localeCompare(b.name || '');
+      });
+      for (var i = 0; i < entries.length; i++) {
+        var e = entries[i];
+        if (!e || typeof e.name !== 'string') continue;
+        var isAudio = e.ext === '.wav' || e.ext === '.mp3' || e.ext === '.flac' || e.ext === '.ogg' || e.ext === '.aac' || e.ext === '.m4a' || e.ext === '.wma' || e.ext === '.opus' || e.ext === '.aiff' || e.ext === '.aif';
+        if (!e.dir && !isAudio) continue;
+        var cls = 'item' + (e.dir ? ' dir' : ' audio');
+        html += '<div class="' + cls + '" ' +
+          (e.dir ? 'ondblclick="loadBrowser(\'' + escPath(path) + '/' + escPath(e.name) + '\')"' :
+           isAudio ? 'ondblclick="loadAudio(\'' + escPath(path) + '/' + escPath(e.name) + '\')"' :
+           '') +
+          '>' + escHtml(e.dir ? e.name + '/' : e.name) + '</div>';
+      }
+      list.innerHTML = html;
+      log('INFO', 'BROWSER', 'Loaded ' + entries.length + ' entries from ' + path);
     });
-    for(var i=0;i<entries.length;i++){
-      var e=entries[i];
-      var isAudio=e.ext==='.wav'||e.ext==='.mp3'||e.ext==='.flac'||e.ext==='.ogg';
-      var cls='item'+(e.dir?' dir':isAudio?' audio':'');
-      html+='<div class="'+cls+'" '+
-        (e.dir?'ondblclick="loadBrowser(&quot;'+escPath(path)+'/'+e.name+'&quot;)"':
-         isAudio?'ondblclick="loadAudio(&quot;'+escPath(path)+'/'+e.name+'&quot;)"':
-         '')+
-        '>'+escHtml(e.dir?e.name+'/':e.name)+'</div>';
+  } else {
+    list.innerHTML = '<div style="color:#ee4444;padding:8px;font-size:11px">Native bridge not ready</div>';
+  }
+}
+
+function escPath(s) {
+  return String(s).replace(/\\/g,'\\\\').replace(/'/g,"\\'");
+}
+
+function parentDir() {
+  var p = STATE.browserPath;
+  var idx = p.lastIndexOf('/');
+  if (idx > 0) { loadBrowser(p.substring(0, idx)); }
+  // at root, stay
+}
+
+function loadAudio(filePath) {
+  log('INFO', 'BROWSER', 'Loading audio: ' + filePath);
+  markDropProcessed(filePath); // prevent decide-policy from loading again
+
+  function doLoad(trackId) {
+    var p = cn('nativeLoadWav', trackId + ',' + filePath);
+    if (p && typeof p.then === 'function') {
+      p.then(function(ok) {
+        if (ok === true) {
+          log('INFO', 'BROWSER', 'Audio loaded OK on track ' + trackId);
+          STATE.sel = trackId;
+          // Extract filename for clip label (separate from track name)
+          var parts = filePath.split('/');
+          _clipNames[trackId] = parts[parts.length - 1] || 'Audio';
+          cn('nativeGetAudioInfo', String(trackId)).then(function(info) {
+            if (info && info.hasAudio) {
+              STATE.audioFrames[trackId] = info.frames;
+              STATE.clipStarts[trackId] = info.clipStart;
+            }
+            cn('nativeGetPeakCache', String(trackId)).then(function(peaks) {
+              STATE.peakCaches[trackId] = peaks || [];
+              renderAll();
+            });
+          });
+        } else {
+          log('WARN', 'BROWSER', 'Failed to load audio: ' + filePath);
+          showError('Could not load ' + filePath.split('/').pop());
+        }
+      });
     }
   }
-  list.innerHTML=html;
+
+  var sel = STATE.sel;
+  // If selected track is empty, use it
+  if (sel >= 0 && sel < STATE.trackCount && !(STATE.audioFrames[sel] > 0)) {
+    doLoad(sel);
+    return;
+  }
+  // Find first empty track
+  for (var i = 0; i < STATE.trackCount; i++) {
+    if (!(STATE.audioFrames[i] > 0)) {
+      STATE.sel = i;
+      doLoad(i);
+      return;
+    }
+  }
+  // All tracks full — add one
+  var p = cn('nativeAddTrack');
+  if (p && typeof p.then === 'function') {
+    p.then(function(n) {
+      if (typeof n === 'number' && n >= 0) {
+        STATE.trackCount++;
+        STATE.sel = n;
+        doLoad(n);
+      } else {
+        showError('Could not add track');
+      }
+    });
+  }
 }
-function escPath(s){return s.replace(/\\/g,'\\\\').replace(/"/g,'\\"');}
-function parentDir(){
-  var p=STATE.browserPath;
-  var idx=p.lastIndexOf('/');
-  if(idx>0)loadBrowser(p.substring(0,idx));
-}
-function loadAudio(filePath){
-  var ok=cn('nativeLoadWav',STATE.sel+','+filePath);
-  if(ok===true){renderAll();}
-}
-function initBrowser(){
-  var cwd=cn('nativeGetCwd');
-  if(typeof cwd==='string'&&cwd)loadBrowser(cwd);
+
+function initBrowser() {
+  log('INFO', 'BROWSER', 'initBrowser: getting CWD...');
+  var p = cn('nativeGetCwd');
+  if (p && typeof p.then === 'function') {
+    p.then(function(cwd) {
+      log('INFO', 'BROWSER', 'CWD = ' + JSON.stringify(cwd) + ' (type=' + typeof cwd + ')');
+      if (typeof cwd === 'string' && cwd) {
+        loadBrowser(cwd);
+      } else {
+        log('WARN', 'BROWSER', 'nativeGetCwd returned invalid value, trying /home');
+        loadBrowser('/home');
+      }
+    });
+  } else {
+    log('WARN', 'BROWSER', 'nativeGetCwd not available, trying /home');
+    loadBrowser('/home');
+  }
 }
 
 // ── MIXER ──
-function renderMixerChannels(){
-  var cont=document.getElementById('mixer-channels');
-  var html='';
-  for(var i=0;i<STATE.trackCount;i++){
-    var n=STATE.names[i]||('Ch'+(i+1));
-    var mc=STATE.mutes[i]?' on-m':'',sc=STATE.solos[i]?' on-s':'',ac=STATE.arms[i]?' on-a':'';
-    html+=
-      '<div class="ch">'+
-        '<span class="cn">'+escHtml(n.substring(0,8))+'</span>'+
-        '<div class="strip">'+
-          '<div class="mc"><div class="mf" id="mf-'+i+'" style="height:0%"></div></div>'+
-          '<div class="fw">'+
-            '<input type="range" id="fd-'+i+'" min="0" max="1.5" step="0.01" value="'+(STATE.volumes[i]||1)+'" '+
-            'oninput="onMixFader('+i+',this.value)" ondblclick="this.value=1;onMixFader('+i+',1)">'+
-          '</div>'+
-        '</div>'+
-        '<span class="db" id="db-'+i+'">+0.0 dB</span>'+
-        '<div class="cbs">'+
-          '<button class="'+mc+'" onclick="doMute('+i+')">M</button>'+
-          '<button class="'+sc+'" onclick="doSolo('+i+')">S</button>'+
-          '<button class="'+ac+'" onclick="doArm('+i+')">A</button>'+
-        '</div>'+
+function renderMixerChannels() {
+  var cont = document.getElementById('mixer-channels');
+  if (!cont) { log('WARN', 'UI', 'mixer-channels element not found'); return; }
+  var html = '';
+  for (var i = 0; i < STATE.trackCount; i++) {
+    var n = STATE.names[i] || ('Ch' + (i + 1));
+    var mc = STATE.mutes[i] ? ' on-m' : '';
+    var sc = STATE.solos[i] ? ' on-s' : '';
+    var ac = STATE.arms[i] ? ' on-a' : '';
+    html +=
+      '<div class="ch">' +
+        '<span class="cn" id="cn-' + i + '">' + escHtml(n.substring(0, 8)) + '</span>' +
+        '<div class="strip">' +
+          '<div class="mc"><div class="mf" id="mf-' + i + '" style="height:0%"></div></div>' +
+          '<div class="fw">' +
+            '<input type="range" id="fd-' + i + '" min="0" max="1.5" step="0.01" value="' + (STATE.volumes[i] || 1) + '" ' +
+            'oninput="onMixFader(' + i + ',this.value)" ondblclick="this.value=1;onMixFader(' + i + ',1)">' +
+          '</div>' +
+        '</div>' +
+        '<span class="db" id="db-' + i + '">+0.0 dB</span>' +
+        '<div class="cbs">' +
+          '<button class="' + mc + '" id="mbm-' + i + '" onclick="doMute(' + i + ')">M</button>' +
+          '<button class="' + sc + '" id="mbs-' + i + '" onclick="doSolo(' + i + ')">S</button>' +
+          '<button class="' + ac + '" id="mba-' + i + '" onclick="doArm(' + i + ')">A</button>' +
+        '</div>' +
       '</div>';
   }
-  cont.innerHTML=html;
+  cont.innerHTML = html;
+  log('DEBUG', 'UI', 'renderMixerChannels: ' + STATE.trackCount + ' channels');
 }
 
-function updateMixer(){
-  for(var i=0;i<STATE.trackCount;i++){
-    var mf=document.getElementById('mf-'+i);
-    if(mf)mf.style.height=Math.min(((STATE.peaks[i]||0)/1.5)*100,100).toFixed(1)+'%';
-    var db=document.getElementById('db-'+i);
-    if(db){
-      var v=STATE.volumes[i]||1;
-      var dB=v>0.0001?20*Math.log10(v):-Infinity;
-      db.textContent=!isFinite(dB)?'-inf dB':(dB>=0?'+':'')+dB.toFixed(1)+' dB';
+function updateMixer() {
+  for (var i = 0; i < STATE.trackCount; i++) {
+    var mf = document.getElementById('mf-' + i);
+    if (mf) mf.style.height = Math.min(((STATE.peaks[i] || 0) / 1.5) * 100, 100).toFixed(1) + '%';
+    var db = document.getElementById('db-' + i);
+    if (db) {
+      var v = STATE.volumes[i] || 1;
+      var dB = v > 0.0001 ? 20 * Math.log10(v) : -Infinity;
+      db.textContent = !isFinite(dB) ? '-inf dB' : (dB >= 0 ? '+' : '') + dB.toFixed(1) + ' dB';
     }
-    var fd=document.getElementById('fd-'+i);
-    if(fd&&document.activeElement!==fd)fd.value=STATE.volumes[i]||1;
+    var fd = document.getElementById('fd-' + i);
+    if (fd && document.activeElement !== fd) fd.value = STATE.volumes[i] || 1;
   }
 }
-function onMixFader(i,v){cn('nativeSetVolume',i+','+v);STATE.volumes[i]=parseFloat(v);}
+
+function onMixFader(i, v) {
+  log('DEBUG', 'MIX', 'Fader ' + i + ' = ' + v);
+  cn('nativeSetVolume', i + ',' + v);
+  STATE.volumes[i] = parseFloat(v);
+}
+
+// ── MASTER ──
+function updateMaster() {
+  var mf = document.getElementById('master-vu');
+  if (mf) {
+    var peak = Math.max(STATE.masterPeakL || 0, STATE.masterPeakR || 0);
+    mf.style.height = Math.min((peak / 1.5) * 100, 100).toFixed(1) + '%';
+  }
+  var fd = document.getElementById('master-fd');
+  if (fd && document.activeElement !== fd) fd.value = STATE.masterVolume !== undefined ? STATE.masterVolume : 1;
+  var db = document.getElementById('master-db');
+  if (db) {
+    var v = STATE.masterVolume !== undefined ? STATE.masterVolume : 1;
+    var dB = v > 0.0001 ? 20 * Math.log10(v) : -Infinity;
+    db.textContent = !isFinite(dB) ? '-inf dB' : (dB >= 0 ? '+' : '') + dB.toFixed(1) + ' dB';
+  }
+}
+
+function onMasterFader(v) {
+  log('DEBUG', 'MIX', 'Master fader = ' + v);
+  cn('nativeSetMasterVolume', String(v));
+  STATE.masterVolume = parseFloat(v);
+}
 
 // ── FX PANEL ──
-function updateFxPanel(){
-  if(STATE.sel<0||STATE.sel>=STATE.trackCount)return;
-  document.getElementById('fx-track-label').textContent=STATE.names[STATE.sel]||('Track '+(STATE.sel+1));
-  var fd=document.getElementById('fx-vol');
-  if(document.activeElement!==fd)fd.value=STATE.volumes[STATE.sel]||1;
-  document.getElementById('fx-vol-v').textContent=(STATE.volumes[STATE.sel]||1).toFixed(2);
+function updateFxPanel() {
+  if (STATE.sel < 0 || STATE.sel >= STATE.trackCount) return;
+  var label = document.getElementById('fx-track-label');
+  if (label) label.textContent = STATE.names[STATE.sel] || ('Track ' + (STATE.sel + 1));
+  var fd = document.getElementById('fx-vol');
+  if (fd && document.activeElement !== fd) fd.value = STATE.volumes[STATE.sel] || 1;
+  var vv = document.getElementById('fx-vol-v');
+  if (vv) vv.textContent = (STATE.volumes[STATE.sel] || 1).toFixed(2);
 }
-function onFxVol(){
-  var v=parseFloat(document.getElementById('fx-vol').value);
-  cn('nativeSetVolume',STATE.sel+','+v);
-  STATE.volumes[STATE.sel]=v;
-  document.getElementById('fx-vol-v').textContent=v.toFixed(2);
+
+function onFxVol() {
+  var v = parseFloat(document.getElementById('fx-vol').value);
+  log('DEBUG', 'FX', 'Vol = ' + v);
+  cn('nativeSetVolume', STATE.sel + ',' + v);
+  STATE.volumes[STATE.sel] = v;
+  document.getElementById('fx-vol-v').textContent = v.toFixed(2);
 }
-function onFxPan(){
-  var v=parseFloat(document.getElementById('fx-pan').value);
-  cn('nativeSetPan',STATE.sel+','+v);
-  document.getElementById('fx-pan-v').textContent=v<0?'L'+Math.abs(v).toFixed(1):v>0?'R'+v.toFixed(1):'C';
+
+function onFxPan() {
+  var v = parseFloat(document.getElementById('fx-pan').value);
+  log('DEBUG', 'FX', 'Pan = ' + v);
+  cn('nativeSetPan', STATE.sel + ',' + v);
+  document.getElementById('fx-pan-v').textContent = v < 0 ? 'L' + Math.abs(v).toFixed(1) : v > 0 ? 'R' + v.toFixed(1) : 'C';
 }
 
 // ── PLUGINS ──
-function renderPluginList(){
-  var plugins=cn('nativePluginList',String(STATE.sel));
-  var list=document.getElementById('plugin-list');
-  var html='';
-  if(plugins&&Array.isArray(plugins)){
-    for(var i=0;i<plugins.length;i++){
-      var p=plugins[i];
-      html+='<div class="pl">'+
-        '<span class="pb'+(p.bypassed?' bypassed':'')+'" onclick="cn(\'nativePluginBypass\','+STATE.sel+','+i+','+(p.bypassed?'0':'1')+');renderPluginList()" title="Toggle">&#9679;</span>'+
-        '<span class="pn">'+escHtml(p.name)+'</span>'+
-        '<span class="px" onclick="cn(\'nativePluginRemove\','+STATE.sel+','+i+');renderPluginList()" title="Remove">&times;</span>'+
-        '</div>';
-    }
+function renderPluginList() {
+  var p = cn('nativePluginList', String(STATE.sel));
+  if (p && typeof p.then === 'function') {
+    p.then(function(plugins) {
+      var list = document.getElementById('plugin-list');
+      if (!list) return;
+      var html = '';
+      if (plugins && Array.isArray(plugins)) {
+        for (var i = 0; i < plugins.length; i++) {
+          var p = plugins[i];
+          html += '<div class="pl">' +
+            '<span class="pb' + (p.bypassed ? ' bypassed' : '') + '" onclick="cn(\'nativePluginBypass\',\'' + STATE.sel + ',' + i + ',' + (p.bypassed ? '0' : '1') + '\');renderPluginList()" title="Toggle">&#9679;</span>' +
+            '<span class="pn">' + escHtml(p.name) + '</span>' +
+            '<span class="pg" onclick="cn(\'nativePluginShowGUI\',\'' + STATE.sel + ',' + i + '\')" title="GUI">G</span>' +
+            '<span class="px" onclick="cn(\'nativePluginRemove\',\'' + STATE.sel + ',' + i + '\');renderPluginList()" title="Remove">&times;</span>' +
+            '</div>';
+        }
+      }
+      list.innerHTML = html;
+    });
   }
-  list.innerHTML=html;
 }
-function scanPlugins(){
-  var data=cn('nativeScanClap','./plugins');
-  STATE.pluginsCache=[];
-  if(data&&Array.isArray(data))STATE.pluginsCache=data;
-  var html='<div style="font-size:12px;color:#667;margin-bottom:8px">CLAP Plugins</div>';
-  if(STATE.pluginsCache.length===0){
-    html+='<div style="color:#444;font-size:10px">None found in ./plugins/</div>';
-  }else{
-    for(var i=0;i<STATE.pluginsCache.length;i++){
-      html+='<div class="pitem" onclick="loadPlugin('+i+')">'+escHtml(STATE.pluginsCache[i].split('/').pop())+'</div>';
-    }
+
+function scanPlugins() {
+  var p = cn('nativeScanClap', './plugins');
+  if (p && typeof p.then === 'function') {
+    p.then(function(data) {
+      STATE.pluginsCache = [];
+      if (data && Array.isArray(data)) STATE.pluginsCache = data;
+      var html = '<div style="font-size:12px;color:#667;margin-bottom:8px">CLAP Plugins</div>';
+      if (STATE.pluginsCache.length === 0) {
+        html += '<div style="color:#444;font-size:10px">None found</div>';
+      } else {
+        for (var i = 0; i < STATE.pluginsCache.length; i++) {
+          var pl = STATE.pluginsCache[i];
+          html += '<div class="pitem" onclick="loadPlugin(' + i + ')">' + escHtml(pl.name || pl.id || pl.path.split('/').pop()) + '</div>';
+        }
+      }
+      showPopup(html);
+    });
+  } else {
+    showPopup('<div style="font-size:12px;color:#667;margin-bottom:8px">CLAP Plugins</div><div style="color:#444;font-size:10px">Bridge not ready</div>');
   }
-  showPopup(html);
 }
-function loadPlugin(i){
-  var path=STATE.pluginsCache[i];
-  cn('nativePluginLoad',STATE.sel+','+path+','+path.split('/').pop().replace('.clap',''));
+
+function loadPlugin(i) {
+  var pl = STATE.pluginsCache[i];
+  if (!pl) return;
+  var path = pl.path;
+  var id = pl.id || path.split('/').pop().replace('.clap', '');
+  log('INFO', 'PLUGIN', 'Loading plugin: ' + id + ' from ' + path);
+  cn('nativePluginLoad', STATE.sel + ',' + path + ',' + id);
   closePopup();
   renderPluginList();
 }
-function showPopup(html){
-  document.getElementById('popup').innerHTML=html;
-  document.getElementById('popup-bg').style.display='block';
-  document.getElementById('popup').style.display='block';
+
+function showPopup(html) {
+  document.getElementById('popup').innerHTML = html;
+  document.getElementById('popup-bg').style.display = 'block';
+  document.getElementById('popup').style.display = 'block';
 }
-function closePopup(){
-  document.getElementById('popup-bg').style.display='none';
-  document.getElementById('popup').style.display='none';
+
+function closePopup() {
+  document.getElementById('popup-bg').style.display = 'none';
+  document.getElementById('popup').style.display = 'none';
 }
 
 // ── DRAG & DROP ──
-document.addEventListener('dragover',function(e){e.preventDefault();e.dataTransfer.dropEffect='copy'});
-document.addEventListener('drop',function(e){
-  e.preventDefault();
-  var paths=[];
-  // Try to get file URIs from text/uri-list (WebKitGTK)
-  var uriList=e.dataTransfer.getData('text/uri-list');
-  if(uriList){
-    var uris=uriList.split('\n');
-    for(var i=0;i<uris.length;i++){
-      var u=uris[i].trim();
-      if(u&&u.indexOf('file://')===0){
-        paths.push(decodeURI(u.replace('file://','')));
+var _dragTrackId = -1;
+var _dropTargetTrackId = -1; // stored by JS drop, consumed by C++ handler
+
+// Global dragover — enables drops anywhere in the window
+document.addEventListener('dragover', function(e) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; });
+
+// Per-track drop via delegation on #track-list
+// JS captures the target track ID; C++ interceptor extracts the file path
+var tl = document.getElementById('track-list');
+if (tl) {
+  tl.addEventListener('dragover', function(e) {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+    var track = e.target.closest('.track');
+    if (track) {
+      var id = parseInt(track.getAttribute('data-track-id'));
+      if (!isNaN(id) && id !== _dragTrackId) {
+        clearDragOver();
+        _dragTrackId = id;
+        track.classList.add('drag-over');
       }
     }
+  });
+
+  tl.addEventListener('dragleave', function(e) {
+    var track = e.target.closest('.track');
+    if (track && track.getAttribute('data-track-id') == _dragTrackId) {
+      clearDragOver();
+    }
+  });
+
+  tl.addEventListener('drop', function(e) {
+    // IMPORTANT: no e.preventDefault() — let WebKit create a navigation action
+    // so the C++ decide-policy interceptor can extract the file path
+    clearDragOver();
+    _dropTargetTrackId = -1;
+    var track = e.target.closest('.track');
+    if (!track) {
+      if (_pendingDropPath) {
+        var pp = _pendingDropPath;
+        _pendingDropPath = null;
+        markDropProcessed(pp);
+        handleEmptyDrop(pp);
+      }
+      return;
+    }
+    // Check if dropped on the "Add Track" row
+    if (track.classList.contains('add-track')) {
+      if (_pendingDropPath) {
+        var pp = _pendingDropPath;
+        _pendingDropPath = null;
+        markDropProcessed(pp);
+        var p = cn('nativeAddTrack');
+        if (p && typeof p.then === 'function') {
+          p.then(function(n) {
+            if (typeof n === 'number' && n >= 0) {
+              STATE.trackCount++;
+              doDropLoad(n, pp);
+            } else {
+              showError('Could not add track');
+            }
+          });
+        }
+      }
+      return;
+    }
+    var trackId = parseInt(track.getAttribute('data-track-id'));
+    if (isNaN(trackId)) return;
+    _dropTargetTrackId = trackId;
+    log('INFO', 'DND', 'JS drop on track ' + trackId);
+    if (_pendingDropPath) {
+      var pp = _pendingDropPath;
+      _pendingDropPath = null;
+      markDropProcessed(pp);
+      doDropLoad(trackId, pp);
+    }
+  });
+}
+
+// Fallback for drops outside #track-list (ruler, bottom panel, etc.)
+document.addEventListener('drop', function(e) {
+  if (e.target.closest('#track-list')) return;
+  if (_pendingDropPath) {
+    var pp = _pendingDropPath;
+    _pendingDropPath = null;
+    markDropProcessed(pp);
+    handleEmptyDrop(pp);
   }
-  // Fallback: try .files[].name (relative) or .path
-  if(paths.length===0&&e.dataTransfer.files){
-    for(var j=0;j<e.dataTransfer.files.length;j++){
-      var f=e.dataTransfer.files[j];
-      paths.push(f.path||f.name);
+});
+
+function doDropLoad(trackId, filePath) {
+  var ext = filePath.split('.').pop().toLowerCase();
+  if (ext !== 'wav' && ext !== 'mp3' && ext !== 'flac' && ext !== 'ogg' && ext !== 'aac' && ext !== 'm4a' && ext !== 'wma' && ext !== 'opus' && ext !== 'aiff' && ext !== 'aif') {
+    log('WARN', 'DND', 'Unsupported format on track ' + trackId + ': ' + filePath);
+    showError('Unsupported audio format: ' + filePath.split('/').pop());
+    return;
+  }
+  log('INFO', 'DND', 'Drop on track ' + trackId + ': ' + filePath);
+  markDropProcessed(filePath);
+  var p = cn('nativeLoadWav', trackId + ',' + filePath);
+  if (p && typeof p.then === 'function') {
+    p.then(function(ok) {
+      if (ok === true) {
+        log('INFO', 'DND', 'Loaded OK on track ' + trackId + ': ' + filePath);
+        STATE.sel = trackId;
+        var parts = filePath.split('/');
+        _clipNames[trackId] = parts[parts.length - 1] || 'Audio';
+        cn('nativeGetAudioInfo', String(trackId)).then(function(info) {
+          if (info && info.hasAudio) {
+            STATE.audioFrames[trackId] = info.frames;
+            STATE.clipStarts[trackId] = info.clipStart;
+          }
+          cn('nativeGetPeakCache', String(trackId)).then(function(peaks) {
+            STATE.peakCaches[trackId] = peaks || [];
+            renderAll();
+          });
+        });
+      } else {
+        log('WARN', 'DND', 'Failed to load on track ' + trackId + ': ' + filePath);
+        showError('Could not load ' + filePath.split('/').pop());
+      }
+    });
+  }
+}
+
+function clearDragOver() {
+  if (_dragTrackId >= 0) {
+    var old = document.querySelector('.track[data-track-id="' + _dragTrackId + '"]');
+    if (old) old.classList.remove('drag-over');
+    _dragTrackId = -1;
+  }
+}
+
+// Called from C++ when WebKit intercepts a native file drop (decide-policy signal)
+// NOTE: C++ may call this twice (decide-policy + drag-data-received fallback).
+// We only STORE the path here; the actual load happens in the JS drop event
+// which fires after and knows the target track.
+var _pendingDropPath = null;
+var _recentDrops = {};
+var _clipNames = []; // clip label names (persist across telemetry)
+
+function markDropProcessed(path) {
+  _recentDrops[path] = Date.now();
+  var cutoff = Date.now() - 6000;
+  for (var p in _recentDrops) {
+    if (_recentDrops[p] < cutoff) delete _recentDrops[p];
+  }
+}
+
+// Called from C++ when WebKit intercepts a native file drop
+// (both decide-policy and drag-data-received may fire).
+// Two-way handshake with JS drop event:
+//   _dropTargetTrackId (JS sets, C++ reads) — JS fired first
+//   _pendingDropPath   (C++ sets, JS reads) — C++ fired first
+window._onNativeDropPath = function(path) {
+  var last = _recentDrops[path];
+  if (last && Date.now() - last < 5000) return;
+  log('INFO', 'DND', 'Native drop path received: ' + path);
+
+  // If JS drop already fired, consume its target track immediately
+  if (_dropTargetTrackId >= 0 && _dropTargetTrackId < STATE.trackCount) {
+    var tid = _dropTargetTrackId;
+    _dropTargetTrackId = -1;
+    markDropProcessed(path);
+    doDropLoad(tid, path);
+    return;
+  }
+
+  // JS hasn't fired yet — store path and wait for the drop event.
+  // The 15s timeout is purely a cleanup (don't handle here —
+  // only actual JS drop events consume the pending path).
+  _pendingDropPath = path;
+  setTimeout(function() {
+    if (_pendingDropPath === path) {
+      _pendingDropPath = null;
+    }
+  }, 15000);
+};
+
+function handleEmptyDrop(path) {
+  var ext = path.split('.').pop().toLowerCase();
+  if (ext !== 'wav' && ext !== 'mp3' && ext !== 'flac' && ext !== 'ogg' && ext !== 'aac' && ext !== 'm4a' && ext !== 'wma' && ext !== 'opus' && ext !== 'aiff' && ext !== 'aif') {
+    log('WARN', 'DND', 'Unsupported format for empty drop: ' + path);
+    showError('Unsupported audio format: ' + path.split('/').pop());
+    return;
+  }
+  log('INFO', 'DND', 'Empty-area drop: ' + path);
+  for (var i = 0; i < STATE.trackCount; i++) {
+    if (!(STATE.audioFrames[i] > 0)) {
+      doDropLoad(i, path);
+      return;
     }
   }
-  for(var k=0;k<paths.length;k++){
-    var ext=paths[k].split('.').pop().toLowerCase();
-    if(ext==='wav'||ext==='mp3'||ext==='flac'||ext==='ogg'){
-      cn('nativeLoadWav',STATE.sel+','+paths[k]);
+  var p = cn('nativeAddTrack');
+  if (p && typeof p.then === 'function') {
+    p.then(function(n) {
+      if (typeof n === 'number' && n >= 0) {
+        STATE.trackCount++;
+        doDropLoad(n, path);
+      } else {
+        showError('Could not add track');
+      }
+    });
+  }
+}
+
+// ── KEYBOARD SHORTCUTS ──
+document.addEventListener('keydown', function(e) {
+  if (e.keyCode === 32) { e.preventDefault(); togglePlay(); }
+});
+
+// ── RESIZABLE DIVIDER ──
+(function() {
+  var divider = document.getElementById('divider');
+  var bottom = document.getElementById('bottom');
+  var isDragging = false;
+  if (!divider || !bottom) return;
+  divider.addEventListener('mousedown', function(e) {
+    isDragging = true;
+    document.body.style.cursor = 'row-resize';
+    e.preventDefault();
+  });
+  document.addEventListener('mousemove', function(e) {
+    if (!isDragging) return;
+    var main = document.getElementById('main');
+    var mainRect = main.getBoundingClientRect();
+    var newHeight = mainRect.bottom - e.clientY - divider.offsetHeight;
+    newHeight = Math.max(120, Math.min(newHeight, window.innerHeight * 0.7));
+    bottom.style.height = newHeight + 'px';
+  });
+  document.addEventListener('mouseup', function() {
+    if (isDragging) {
+      isDragging = false;
+      document.body.style.cursor = '';
+    }
+  });
+})();
+
+// ── CLIP DRAG ──
+var clipDrag = null;
+var _clipDragInitialized = false;
+
+function initClipDrag() {
+  if (_clipDragInitialized) return;
+  var list = document.getElementById('track-list');
+  if (!list) return;
+  _clipDragInitialized = true;
+
+  list.addEventListener('mousedown', function(e) {
+    var cb = e.target.closest('.clip-block');
+    if (!cb || e.button !== 0) return;
+    e.stopPropagation();
+    e.preventDefault();
+    var trackIdx = parseInt(cb.dataset.track);
+
+    // Freeze scrolling while we drag a clip — prevents the browser
+    // auto‑scrolling the track list and wrecking the clip position.
+    var tl = document.getElementById('track-list');
+    var savedOverflowY = tl ? tl.style.overflowY : null;
+    if (tl) tl.style.overflowY = 'hidden';
+
+    clipDrag = {
+      trackIdx: trackIdx,
+      startX: e.clientX,
+      startY: e.clientY,
+      origLeft: parseFloat(cb.style.left) || 0,
+      cb: cb,
+      infoEl: null,
+      savedOverflowY: savedOverflowY
+    };
+    cb.classList.add('dragging');
+    document.body.style.cursor = 'grabbing';
+    document.body.style.userSelect = 'none';
+    _dragInProgress = true;
+  });
+}
+
+document.addEventListener('mousemove', function(e) {
+  if (!clipDrag) return;
+  e.preventDefault();
+  var pxPerSec = 80;
+
+  // Pure delta: clip moves exactly the same pixel distance as the mouse.
+  // Both e.clientX and origLeft are CSS-pixel values, so the delta
+  // applies 1:1 regardless of any parent offset.
+  var dx = e.clientX - clipDrag.startX;
+  var newLeft = Math.round(Math.max(0, clipDrag.origLeft + dx));
+  clipDrag.cb.style.left = newLeft + 'px';
+
+  // Position overlay
+  var clipSec = newLeft / pxPerSec;
+  var clipM = Math.floor(clipSec / 60);
+  var clipS = Math.floor(clipSec % 60);
+  var clipMs = Math.floor((clipSec - Math.floor(clipSec)) * 1000);
+  var posText = String(clipM).padStart(2,'0') + ':' + String(clipS).padStart(2,'0') + '.' + String(clipMs).padStart(3,'0');
+  if (!clipDrag.infoEl) {
+    clipDrag.infoEl = document.createElement('div');
+    clipDrag.infoEl.style.cssText = 'position:fixed;bottom:10px;left:50%;transform:translateX(-50%);background:#1a1a24;border:1px solid #2a2a3a;border-radius:6px;padding:4px 12px;font-size:12px;color:#d0d0e0;z-index:100;pointer-events:none';
+    document.body.appendChild(clipDrag.infoEl);
+  }
+  clipDrag.infoEl.textContent = posText;
+
+  // Vertical drag — detect target track
+  var trackList = document.getElementById('track-list');
+  if (trackList) {
+    var tracks = trackList.querySelectorAll('.track');
+    var found = -1;
+    tracks.forEach(function(t, idx) {
+      var r = t.getBoundingClientRect();
+      if (e.clientY >= r.top && e.clientY < r.bottom) found = idx;
+    });
+    tracks.forEach(function(t) { t.classList.remove('drag-target'); });
+    if (found >= 0 && found !== clipDrag.trackIdx) {
+      tracks[found].classList.add('drag-target');
     }
   }
-  setTimeout(function(){renderAll();},300);
+});
+
+document.addEventListener('mouseup', function(e) {
+  if (!clipDrag) return;
+  clipDrag.cb.classList.remove('dragging');
+  if (clipDrag.infoEl) { clipDrag.infoEl.remove(); clipDrag.infoEl = null; }
+
+  // Restore scroll and body styles frozen during drag
+  var tl = document.getElementById('track-list');
+  if (tl) tl.style.overflowY = clipDrag.savedOverflowY || '';
+  document.body.style.cursor = '';
+  document.body.style.userSelect = '';
+
+  var pxPerSec = 80;
+  var sr = 48000;
+
+  // Re‑compute from the mouse position AT RELEASE so that any pixels
+  // moved since the last mousemove event are included.
+  var dx = e.clientX - clipDrag.startX;
+  var finalLeft = Math.round(Math.max(0, clipDrag.origLeft + dx));
+  clipDrag.cb.style.left = finalLeft + 'px';
+  var newClipStart = Math.round((finalLeft / pxPerSec) * sr);
+
+  // Determine target track
+  var trackList = document.getElementById('track-list');
+  var targetTrack = clipDrag.trackIdx;
+  if (trackList) {
+    var tracks = trackList.querySelectorAll('.track');
+    tracks.forEach(function(t) { t.classList.remove('drag-target'); });
+    tracks.forEach(function(t, idx) {
+      var r = t.getBoundingClientRect();
+      if (e.clientY >= r.top && e.clientY < r.bottom) targetTrack = idx;
+    });
+  }
+
+  if (targetTrack !== clipDrag.trackIdx) {
+    log('INFO', 'CLIP', 'Move clip track ' + clipDrag.trackIdx + ' → ' + targetTrack + ' at ' + newClipStart);
+    var s = clipDrag.trackIdx, d = targetTrack;
+    // If target is the "+" row, add a new track first
+    if (d >= STATE.trackCount) {
+      var p = cn('nativeAddTrack');
+      if (p && typeof p.then === 'function') {
+        p.then(function(n) {
+          if (typeof n === 'number' && n >= 0) {
+            STATE.trackCount++;
+            d = n;
+            if (STATE.audioFrames[s] > 0) {
+              STATE.audioFrames[d] = STATE.audioFrames[s];
+              STATE.audioFrames[s] = 0;
+              STATE.peakCaches[d] = STATE.peakCaches[s] || [];
+              STATE.peakCaches[s] = [];
+              STATE.clipStarts[d] = newClipStart;
+              STATE.clipStarts[s] = 0;
+              _clipNames[d] = _clipNames[s] || '';
+              _clipNames[s] = '';
+              cn('nativeMoveClip', s + ',' + d + ',' + newClipStart);
+              renderTrackList();
+              refreshPeaks();
+            }
+          }
+        });
+      }
+    } else if (STATE.audioFrames[s] > 0) {
+      // Move local STATE (not swap — source becomes empty)
+      STATE.audioFrames[d] = STATE.audioFrames[s];
+      STATE.audioFrames[s] = 0;
+      STATE.peakCaches[d] = STATE.peakCaches[s] || [];
+      STATE.peakCaches[s] = [];
+      STATE.clipStarts[d] = newClipStart;
+      STATE.clipStarts[s] = 0;
+      _clipNames[d] = _clipNames[s] || '';
+      _clipNames[s] = '';
+      cn('nativeMoveClip', s + ',' + d + ',' + newClipStart);
+      renderTrackList();
+      refreshPeaks();
+    }
+  } else {
+    log('INFO', 'CLIP', 'Change clipStart track ' + clipDrag.trackIdx + ' → ' + newClipStart);
+    STATE.clipStarts[clipDrag.trackIdx] = newClipStart;
+    cn('nativeSetClipStart', clipDrag.trackIdx + ',' + newClipStart);
+    STATE._needsTrackRender = true;
+  }
+  _dragInProgress = false;
+  clipDrag = null;
 });
 
 // ── INIT ──
-function renderAll(){
-  renderTrackList();renderMixerChannels();drawRuler();drawAllWaveforms();
-  document.getElementById('track-count').textContent=STATE.trackCount+' track'+(STATE.trackCount!==1?'s':'');
+function renderAll() {
+  renderTrackList();
+  renderMixerChannels();
+  drawRuler();
+  var tc = document.getElementById('track-count');
+  if (tc) tc.textContent = STATE.trackCount + ' track' + (STATE.trackCount !== 1 ? 's' : '');
+  log('DEBUG', 'UI', 'renderAll complete');
 }
+
+log('INFO', 'SYS', 'Hydraw DAW UI loaded, waiting for native telemetry...');
 </script>
 </body>
 </html>

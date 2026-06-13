@@ -15,7 +15,7 @@ struct ClapHost {
         if (!lib) return nullptr;
 
         const clap_plugin_entry_t* entry =
-            (const clap_plugin_entry_t*)dlsym(lib, "clap_plugin_entry");
+            (const clap_plugin_entry_t*)dlsym(lib, "clap_entry");
         if (!entry) {
             dlclose(lib);
             return nullptr;
@@ -28,14 +28,14 @@ struct ClapHost {
     static void unloadLibrary(void* lib) {
         if (!lib) return;
         const clap_plugin_entry_t* entry =
-            (const clap_plugin_entry_t*)dlsym(lib, "clap_plugin_entry");
+            (const clap_plugin_entry_t*)dlsym(lib, "clap_entry");
         if (entry && entry->deinit) entry->deinit();
         dlclose(lib);
     }
 
     static uint32_t getPluginCount(void* lib) {
         const clap_plugin_entry_t* entry =
-            (const clap_plugin_entry_t*)dlsym(lib, "clap_plugin_entry");
+            (const clap_plugin_entry_t*)dlsym(lib, "clap_entry");
         if (!entry) return 0;
         const clap_plugin_factory_t* factory =
             (const clap_plugin_factory_t*)entry->get_factory(CLAP_PLUGIN_FACTORY_ID);
@@ -45,7 +45,7 @@ struct ClapHost {
 
     static const clap_plugin_descriptor_t* getPluginDescriptor(void* lib, uint32_t index) {
         const clap_plugin_entry_t* entry =
-            (const clap_plugin_entry_t*)dlsym(lib, "clap_plugin_entry");
+            (const clap_plugin_entry_t*)dlsym(lib, "clap_entry");
         if (!entry) return nullptr;
         const clap_plugin_factory_t* factory =
             (const clap_plugin_factory_t*)entry->get_factory(CLAP_PLUGIN_FACTORY_ID);
@@ -56,7 +56,7 @@ struct ClapHost {
     static const clap_plugin_t* createPlugin(void* lib, const clap_host_t* host,
                                              const char* pluginId) {
         const clap_plugin_entry_t* entry =
-            (const clap_plugin_entry_t*)dlsym(lib, "clap_plugin_entry");
+            (const clap_plugin_entry_t*)dlsym(lib, "clap_entry");
         if (!entry) return nullptr;
         const clap_plugin_factory_t* factory =
             (const clap_plugin_factory_t*)entry->get_factory(CLAP_PLUGIN_FACTORY_ID);

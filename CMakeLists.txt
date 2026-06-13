@@ -46,6 +46,8 @@ target_link_libraries(hydraw_daw PRIVATE
     pthread
     dl
     rt
+    GL
+    X11
 )
 
 if(UNIX AND NOT APPLE)
