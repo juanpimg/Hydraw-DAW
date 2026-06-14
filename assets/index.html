@@ -835,7 +835,7 @@ function loadBrowser(path) {
         list.innerHTML = '<div style="color:#ee4444;padding:8px;font-size:11px">Error loading directory</div>';
         return;
       }
-      var html = '<div class="item dir" onclick="parentDir()">..</div>';
+      var html = '<div class="item dir" onclick="parentDir()" style="color:#d0d4e0;padding:5px 8px;cursor:pointer">..</div>';
       entries.sort(function(a, b) {
         if (a.dir && !b.dir) return -1;
         if (!a.dir && b.dir) return 1;
@@ -849,13 +849,18 @@ function loadBrowser(path) {
           if (!isAudio) continue;
         }
         var cls = 'item' + (e.dir ? ' dir' : ' audio');
-        html += '<div class="' + cls + '" ' +
+        html += '<div class="' + cls + '" style="color:#d0d4e0;padding:5px 8px;cursor:pointer" ' +
           (e.dir ? 'ondblclick="loadBrowser(\'' + escPath(path) + '/' + escPath(e.name) + '\')"' :
            'ondblclick="loadAudio(\'' + escPath(path) + '/' + escPath(e.name) + '\')"') +
           '>' + escHtml(e.dir ? e.name + '/' : e.name) + '</div>';
       }
       list.innerHTML = html;
-      log('INFO', 'BROWSER', 'Loaded ' + entries.length + ' entries from ' + path);
+      log('INFO', 'BROWSER', 'Loaded ' + entries.length + ' entries from ' + path + '; first item: ' + (entries.length>0 ? (entries[0].dir?'DIR:':'FILE:') + entries[0].name : 'none'));
+      // Verify DOM was actually set
+      setTimeout(function() {
+        var items = list.querySelectorAll('.item');
+        log('DEBUG','BROWSER','DOM check: ' + items.length + ' items rendered, first text: ' + (items.length>0 ? items[0].textContent.trim() : '(none)'));
+      }, 50);
     });
   } else {
     list.innerHTML = '<div style="color:#ee4444;padding:8px;font-size:11px">Native bridge not ready</div>';
