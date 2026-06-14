@@ -164,6 +164,9 @@ html,body{
 #fx-controls .row .val{color:var(--txt2);font-size:10px;min-width:32px;text-align:right;font-variant-numeric:tabular-nums}
 .fx-ctl{display:inline-grid;place-items:center;width:22px;height:22px;border-radius:4px;cursor:pointer;font-size:10px;font-weight:700;color:var(--txt3);background:var(--bg3);border:1px solid var(--bd);transition:all 0.12s}
 .fx-ctl:hover{color:var(--txt);background:var(--bg2);border-color:var(--txt4)}
+.fx-ctl.on-m{color:var(--red);border-color:#5a2020;background:#1a0e0e;box-shadow:0 0 8px rgba(239,68,68,0.2)}
+.fx-ctl.on-s{color:var(--yellow);border-color:#5a3a10;background:#1a1408;box-shadow:0 0 8px rgba(234,179,8,0.2)}
+.fx-ctl.on-a{color:var(--red);border-color:#5a2020;background:#1a0e0e;box-shadow:0 0 8px rgba(239,68,68,0.2)}
 .fx-add{font-size:10px;padding:4px 12px;cursor:pointer;border:1px solid var(--bd);border-radius:6px;background:var(--bg3);color:var(--txt3);transition:all 0.12s;font-family:inherit;margin-left:4px}
 .fx-add:hover{background:var(--bg2);color:var(--txt);border-color:var(--accent)}
 #plugin-list .pl{display:flex;align-items:center;gap:8px;padding:5px 8px;border-radius:5px}
@@ -186,11 +189,11 @@ html,body{
   align-items:center;padding:5px 2px 3px;border-right:1px solid var(--bg3);flex-shrink:0;
 }
 .ch .cn{font-size:9px;color:var(--txt3);white-space:nowrap;overflow:hidden;max-width:68px;text-overflow:ellipsis;font-weight:600;letter-spacing:0.3px}
-.ch .strip{display:flex;gap:5px;width:100%;flex:1;min-height:50px;align-items:flex-end}
-.ch .mc{width:12px;background:#0e0e14;border-radius:2px;position:relative;overflow:hidden;flex-shrink:0;margin-bottom:2px}
+.ch .strip{display:flex;gap:5px;width:100%;flex:1;min-height:50px}
+.ch .mc{width:12px;background:#0e0e14;border-radius:2px;overflow:hidden;flex-shrink:0;margin-bottom:2px;position:relative;flex:1}
 .ch .mc .mf{
-  position:absolute;bottom:0;left:0;width:100%;border-radius:2px;
-  transition:transform 0.03s;transform-origin:bottom;
+  position:absolute;bottom:0;left:0;width:100%;height:100%;border-radius:2px;
+  transition:transform 0.03s ease;transform-origin:bottom;
   background:linear-gradient(to top,#22c55e 0%,#eab308 55%,#ef4444 80%);
   box-shadow:0 0 6px rgba(34,197,94,0.25);
 }
@@ -222,15 +225,16 @@ html,body{
   width:72px;flex-shrink:0;border-left:2px solid var(--bd);
   display:flex;flex-direction:column;align-items:center;padding:5px 2px 3px;background:var(--bg2);
 }
+.master-ch{display:flex;flex-direction:column;flex:1;width:100%}
 .master-cn{font-size:9px;color:var(--txt2);margin:1px 0;font-weight:700;letter-spacing:0.5px;white-space:nowrap}
-.master-strip{flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;width:100%;min-height:50px}
-.master-mc{width:12px;flex:1;background:#0e0e14;border-radius:2px;position:relative;overflow:hidden}
-.master-mf{position:absolute;bottom:0;left:0;width:100%;border-radius:2px;
-  transition:transform 0.03s;transform-origin:bottom;
+.master-strip{flex:1;display:flex;gap:5px;width:100%;min-height:50px}
+.master-mc{width:12px;background:#0e0e14;border-radius:2px;overflow:hidden;flex-shrink:0;margin-bottom:2px;position:relative}
+.master-mf{position:absolute;bottom:0;left:0;width:100%;height:100%;border-radius:2px;
+  transition:transform 0.03s ease;transform-origin:bottom;
   background:linear-gradient(to top,#22c55e 0%,#eab308 55%,#ef4444 80%);
   box-shadow:0 0 6px rgba(34,197,94,0.25);
 }
-.master-fw{flex:1;display:flex;align-items:flex-end;justify-content:center;min-height:0;width:100%}
+.master-fw{flex:1;display:flex;align-items:flex-end;justify-content:center;min-height:0}
 .master-fw input[type=range]{
   writing-mode:bt-lr;-webkit-appearance:slider-vertical;appearance:slider-vertical;
   width:18px;flex:1;min-height:0;background:transparent;border-radius:0;
@@ -304,9 +308,9 @@ html,body{
             <div class="row"><label>Vol</label><input type="range" id="fx-vol" min="0" max="1.5" step="0.01" value="1" oninput="onFxVol()"><span class="val" id="fx-vol-v">1.00</span></div>
             <div class="row"><label>Pan</label><input type="range" id="fx-pan" min="-1" max="1" step="0.01" value="0" oninput="onFxPan()"><span class="val" id="fx-pan-v">C</span></div>
             <div class="row" style="gap:8px;justify-content:center">
-              <label class="fx-ctl" onclick="doMute(STATE.sel)">M</label>
-              <label class="fx-ctl" onclick="doSolo(STATE.sel)">S</label>
-              <label class="fx-ctl" onclick="doArm(STATE.sel)">R</label>
+              <label class="fx-ctl" id="fxm" onclick="doMute(STATE.sel)">M</label>
+              <label class="fx-ctl" id="fxs" onclick="doSolo(STATE.sel)">S</label>
+              <label class="fx-ctl" id="fxr" onclick="doArm(STATE.sel)">R</label>
             </div>
           </div>
         </div>
@@ -316,10 +320,10 @@ html,body{
         <div id="mixer-body">
           <div id="mixer-scroll"><div id="mixer-channels"></div></div>
           <div id="master-channel">
-            <div class="master-ch">
+              <div class="master-ch" onclick="selectTrack(-1)" style="cursor:pointer">
               <span class="master-cn">Master</span>
               <div class="master-strip">
-                <div class="master-mc"><div class="master-mf" id="master-vu" style="height:0%"></div></div>
+                <div class="master-mc"><div class="master-mf" id="master-vu"></div></div>
                 <div class="master-fw">
                   <input type="range" id="master-fd" min="0" max="1.5" step="0.01" value="1"
                          oninput="onMasterFader(this.value)" ondblclick="this.value=1;onMasterFader(1)">
@@ -366,7 +370,11 @@ setInterval(flushLogBatch, LOG_FLUSH_MS);
 // Capture unhandled errors (SyntaxError, ReferenceError, etc.) to C++ log
 window.addEventListener('error', function(e) {
   var msg = (e.error ? e.error.message : e.message) || String(e);
-  if (msg === 'Script error.') return; // WebKitGTK false positive, not actionable
+  // WebKitGTK false positives: suppress known non-actionable noise
+  if (msg === 'Script error.' || (e.lineno === 1 && !e.colno)) {
+    e.preventDefault();
+    return;
+  }
   log('ERROR', 'UNHANDLED', msg);
 });
 window.addEventListener('unhandledrejection', function(e) {
@@ -449,11 +457,44 @@ function updateUIFromNative(a) {
     _needsWaveformRedraw = true;
     _timelineWidthDirty = true;
   }
+  // WebKitGTK drops trailing zeros from JS arrays. Pad with zeros
+  // so every track index i has a defined audioFrames[i]. Runs
+  // regardless of isFull so clicks / non-full updates also benefit.
+  while (STATE.audioFrames.length < STATE.trackCount) STATE.audioFrames.push(0);
+
+  // Rebuild the track list DOM if the structural state changed: track
+  // count (add/remove) or any per-track audio frame count (load/clear
+  // audio changes the visible clip block). Without this, the DOM is
+  // frozen at the last full render — added tracks have no <div>, removed
+  // tracks' <div>s linger with stale waveforms, and the inline
+  // onclick="selectTrack(N)" handlers are bound to indices that no
+  // longer match the current track layout.
+  var _prevCount = STATE._lastRenderedTrackCount;
+  var _prevAudio  = STATE._lastRenderedAudioFrames;
+  var _curCount   = STATE.trackCount;
+  var _curAudio   = STATE.audioFrames || [];
+  var _needRebuild = (_prevCount === undefined) || (_prevCount !== _curCount);
+  if (!_needRebuild && isFull) {
+    for (var _i = 0; _i < _curCount; _i++) {
+      if ((_prevAudio[_i] || 0) !== (_curAudio[_i] || 0)) {
+        _needRebuild = true;
+        break;
+      }
+      if (_i >= (_prevAudio ? _prevAudio.length : 0)) { _needRebuild = true; break; }
+    }
+  }
+  if (_needRebuild) {
+    log('INFO', 'UI', 'rebuild: prevCount=' + _prevCount + ' curCount=' + _curCount +
+         ' prevAudio=' + JSON.stringify(_prevAudio || []) + ' curAudio=' + JSON.stringify(_curAudio));
+    renderTrackList();
+    STATE._lastRenderedTrackCount = _curCount;
+    STATE._lastRenderedAudioFrames = _curAudio.slice();
+  }
 
   refreshPeaks();
 
-  if (STATE.sel >= STATE.trackCount)
-    STATE.sel = Math.max(0, STATE.trackCount - 1);
+  if (STATE.sel !== -1 && STATE.sel >= STATE.trackCount)
+    STATE.sel = Math.max(-1, STATE.trackCount - 1);
 
   // Update names, M/S/A button states, and drop-hints
   for (var i = 0; i < STATE.trackCount; i++) {
@@ -528,7 +569,9 @@ function loadProject() {
     cn('nativeLoadProject', path).then(function(ret) {
       STATE.lastProjectPath = path;
       log('INFO', 'LOAD', ret);
-      updateUIFromNative({});
+      // The C++ side already requested a full telemetry refresh via
+      // g_uiDirty.fetch_or(kDirtyExtended), so the next uiUpdateLoop tick
+      // will push the new track layout. No need to poke the UI here.
     });
   });
 }
@@ -552,10 +595,27 @@ function exportAudio() {
 // Called asynchronously from C++ when export finishes
 window.onExportDone = function(result) {
   log('INFO', 'EXPORT', result);
-  if (result === 'OK')
+  if (result === 'OK') {
     showStatus('Export complete');
-  else
+    showPopup(
+      '<div style="text-align:center;padding:24px">' +
+        '<div style="font-size:48px;color:#44bb66;margin-bottom:12px">&#10003;</div>' +
+        '<h2 style="color:#e4e4e8;margin:0 0 8px 0">Export Complete</h2>' +
+        '<p style="color:#8888a4;margin:0 0 20px 0;font-size:13px">Audio file saved successfully</p>' +
+        '<button class="sm-btn on" onclick="closePopup()" style="padding:8px 24px">OK</button>' +
+      '</div>'
+    );
+  } else {
     showStatus('Export failed', true);
+    showPopup(
+      '<div style="text-align:center;padding:24px">' +
+        '<div style="font-size:48px;color:#ee4444;margin-bottom:12px">&#10007;</div>' +
+        '<h2 style="color:#e4e4e8;margin:0 0 8px 0">Export Failed</h2>' +
+        '<p style="color:#8888a4;margin:0 0 20px 0;font-size:13px">Check the log for details</p>' +
+        '<button class="sm-btn on" onclick="closePopup()" style="padding:8px 24px">OK</button>' +
+      '</div>'
+    );
+  }
 };
 
 var _statusTimer = null;
@@ -609,6 +669,16 @@ function addTrack() {
     p.then(function(n) {
       if (typeof n === 'number' && n >= 0) {
         log('INFO', 'TRACK', 'Added track ' + n);
+
+        STATE.peakCaches[n] = [];
+        STATE.audioFrames[n] = 0;
+        STATE.clipStarts[n] = 0;
+        _clipNames[n] = '';
+        if (STATE.volumes) STATE.volumes[n] = 1.0;
+        if (STATE.mutes) STATE.mutes[n] = false;
+        if (STATE.solos) STATE.solos[n] = false;
+        if (STATE.arms) STATE.arms[n] = false;
+
         STATE.trackCount++;
         renderAll();
       } else {
@@ -627,16 +697,30 @@ function removeTrack() {
   }
   var idx = STATE.sel;
   log('INFO', 'TRACK', 'Removing track ' + idx);
+
+  if (STATE.peakCaches) STATE.peakCaches.splice(idx, 1);
+  if (_clipNames) _clipNames.splice(idx, 1);
+  if (STATE.audioFrames) STATE.audioFrames.splice(idx, 1);
+  if (STATE.clipStarts) STATE.clipStarts.splice(idx, 1);
+  if (STATE.volumes) STATE.volumes.splice(idx, 1);
+  if (STATE.mutes) STATE.mutes.splice(idx, 1);
+  if (STATE.solos) STATE.solos.splice(idx, 1);
+  if (STATE.arms) STATE.arms.splice(idx, 1);
+  if (STATE.names) STATE.names.splice(idx, 1);
+  if (STATE.peaks) STATE.peaks.splice(idx, 1);
+
   cn('nativeRemoveTrack', String(idx));
   STATE.trackCount--;
   if (STATE.sel >= STATE.trackCount) STATE.sel = STATE.trackCount - 1;
+
+  _needsWaveformRedraw = true;
   renderAll();
 }
 
 function selectTrack(i) {
-  log('DEBUG', 'TRACK', 'Select track ' + i);
+  log('INFO', 'TRACK', 'Select track ' + i);
   STATE.sel = i;
-  renderTrackList();
+  if (i >= 0) renderTrackList();
   updateFxPanel();
 }
 
@@ -697,6 +781,7 @@ var _scrollMode = 'continuous'; // 'continuous' | 'page'
 function renderTrackList() {
   var list = document.getElementById('track-list');
   if (!list) { log('WARN', 'UI', 'track-list element not found'); return; }
+  log('INFO', 'UI', 'renderTrackList ENTER: STATE.sel=' + STATE.sel + ' trackCount=' + STATE.trackCount + ' audioFrames=' + JSON.stringify(STATE.audioFrames));
   var html = '';
   var pxPerSec = 80;
   var sr = 48000;
@@ -720,7 +805,7 @@ function renderTrackList() {
     html +=
       '<div class="track' + sel + '" data-track-id="' + i + '" onclick="selectTrack(' + i + ')">' +
         '<div class="th">' +
-          '<span class="tn" id="tn-' + i + '">' + escHtml(n.substring(0, 14)) + '</span>' +
+          '<span class="tn" id="tn-' + i + '" onclick="event.stopPropagation();selectTrack(' + i + ')">' + escHtml(n.substring(0, 14)) + '</span>' +
           '<span class="tb' + mc + '" id="tbm-' + i + '" onclick="event.stopPropagation();doMute(' + i + ')">M</span>' +
           '<span class="tb' + sc + '" id="tbs-' + i + '" onclick="event.stopPropagation();doSolo(' + i + ')">S</span>' +
           '<span class="tb' + ac + '" id="tba-' + i + '" onclick="event.stopPropagation();doArm(' + i + ')">A</span>' +
@@ -935,18 +1020,25 @@ function drawAllWaveforms() {
   if (!_needsWaveformRedraw) return;
   _needsWaveformRedraw = false;
   for (var i = 0; i < STATE.trackCount; i++) {
-    if (!(STATE.audioFrames[i] > 0)) continue;
-    var pc = STATE.peakCaches[i];
-    if (!pc || !pc.length) {
-      log('DEBUG', 'WF', 'Track ' + i + ' has audioFrames=' + STATE.audioFrames[i] + ' but peakCaches[i] is empty');
-      continue;
-    }
     var c = document.getElementById('wf-' + i);
     if (!c) continue;
     var parent = c.parentElement;
     if (!parent) continue;
     var w = parent.clientWidth, h = parent.clientHeight;
     if (w < 4 || h < 4) continue;
+
+    if (!(STATE.audioFrames[i] > 0)) {
+      c.width = w; c.height = h;
+      var ctx = c.getContext('2d');
+      ctx.clearRect(0, 0, w, h);
+      continue;
+    }
+
+    var pc = STATE.peakCaches[i];
+    if (!pc || !pc.length) {
+      log('DEBUG', 'WF', 'Track ' + i + ' has audioFrames=' + STATE.audioFrames[i] + ' but peakCaches[i] is empty');
+      continue;
+    }
     c.width = w; c.height = h;
     c.style.left = '0'; c.style.top = '0';
     c.style.width = w + 'px'; c.style.height = h + 'px';
@@ -1121,7 +1213,7 @@ function renderMixerChannels() {
       '<div class="ch">' +
         '<span class="cn" id="cn-' + i + '">' + escHtml(n.substring(0, 8)) + '</span>' +
         '<div class="strip">' +
-          '<div class="mc"><div class="mf" id="mf-' + i + '" style="height:0%"></div></div>' +
+          '<div class="mc"><div class="mf" id="mf-' + i + '"></div></div>' +
           '<div class="fw">' +
             '<input type="range" id="fd-' + i + '" min="0" max="1.5" step="0.01" value="' + (STATE.volumes[i] || 1) + '" ' +
             'oninput="onMixFader(' + i + ',this.value)" ondblclick="this.value=1;onMixFader(' + i + ',1)">' +
@@ -1188,6 +1280,9 @@ function updateMaster() {
     var dB = v > 0.0001 ? 20 * Math.log10(v) : -Infinity;
     db.textContent = !isFinite(dB) ? '-inf dB' : (dB >= 0 ? '+' : '') + dB.toFixed(1) + ' dB';
   }
+  // Master selected highlight
+  var mc = document.getElementById('master-channel');
+  if (mc) mc.className = STATE.sel === -1 ? 'sel' : '';
 }
 
 function onMasterFader(v) {
@@ -1198,17 +1293,27 @@ function onMasterFader(v) {
 
 // ── FX PANEL ──
 function updateFxPanel() {
-  if (STATE.sel < 0 || STATE.sel >= STATE.trackCount) return;
+  var isMaster = STATE.sel === -1;
+  if (!isMaster && (STATE.sel < 0 || STATE.sel >= STATE.trackCount)) return;
   var label = document.getElementById('fx-track-label');
-  if (label) label.textContent = STATE.names[STATE.sel] || ('Track ' + (STATE.sel + 1));
+  if (label) label.textContent = isMaster ? 'Master' : (STATE.names[STATE.sel] || ('Track ' + (STATE.sel + 1)));
+  var ctrlDiv = document.getElementById('fx-controls');
+  if (ctrlDiv) ctrlDiv.style.display = isMaster ? 'none' : '';
   var fd = document.getElementById('fx-vol');
-  if (fd && document.activeElement !== fd) fd.value = STATE.volumes[STATE.sel] || 1;
+  if (fd && document.activeElement !== fd && !isMaster) fd.value = STATE.volumes[STATE.sel] || 1;
   var vv = document.getElementById('fx-vol-v');
-  if (vv) vv.textContent = (STATE.volumes[STATE.sel] || 1).toFixed(2);
+  if (vv && !isMaster) vv.textContent = (STATE.volumes[STATE.sel] || 1).toFixed(2);
+  var fxm = document.getElementById('fxm');
+  if (fxm) fxm.className = 'fx-ctl' + (!isMaster && STATE.mutes[STATE.sel] ? ' on-m' : '');
+  var fxs = document.getElementById('fxs');
+  if (fxs) fxs.className = 'fx-ctl' + (!isMaster && STATE.solos[STATE.sel] ? ' on-s' : '');
+  var fxr = document.getElementById('fxr');
+  if (fxr) fxr.className = 'fx-ctl' + (!isMaster && STATE.arms[STATE.sel] ? ' on-a' : '');
   renderPluginList();
 }
 
 function onFxVol() {
+  if (STATE.sel === -1) return;
   var v = parseFloat(document.getElementById('fx-vol').value);
   log('DEBUG', 'FX', 'Vol = ' + v);
   cn('nativeSetVolume', STATE.sel + ',' + v);
@@ -1217,6 +1322,7 @@ function onFxVol() {
 }
 
 function onFxPan() {
+  if (STATE.sel === -1) return;
   var v = parseFloat(document.getElementById('fx-pan').value);
   log('DEBUG', 'FX', 'Pan = ' + v);
   cn('nativeSetPan', STATE.sel + ',' + v);
@@ -1226,9 +1332,10 @@ function onFxPan() {
 // ── PLUGINS ──
 var _lastPluginSel = -2;
 function renderPluginList(force) {
-  if (!force && _lastPluginSel === STATE.sel) return;
-  _lastPluginSel = STATE.sel;
-  var p = cn('nativePluginList', String(STATE.sel));
+  var track = STATE.sel === -1 ? -1 : STATE.sel;
+  if (!force && _lastPluginSel === track) return;
+  _lastPluginSel = track;
+  var p = cn('nativePluginList', String(track));
   if (p && typeof p.then === 'function') {
     p.then(function(plugins) {
       var list = document.getElementById('plugin-list');
@@ -1238,13 +1345,13 @@ function renderPluginList(force) {
         for (var i = 0; i < plugins.length; i++) {
           var p = plugins[i];
           html += '<div class="pl">' +
-            '<span class="pb' + (p.bypassed ? ' bypassed' : '') + '" onclick="cn(\'nativePluginBypass\',\'' + STATE.sel + ',' + i + ',' + (p.bypassed ? '0' : '1') + '\');renderPluginList(true)" title="Toggle">&#9679;</span>' +
-            '<span class="pn" onclick="cn(\'nativePluginShowGUI\',\'' + STATE.sel + ',' + i + '\')" title="Toggle GUI">' + escHtml(p.name) + '</span>' +
-            '<span class="px" onclick="cn(\'nativePluginRemove\',\'' + STATE.sel + ',' + i + '\');renderPluginList(true)" title="Remove">&times;</span>' +
+            '<span class="pb' + (p.bypassed ? ' bypassed' : '') + '" onclick="cn(\'nativePluginBypass\',\'' + track + ',' + i + ',' + (p.bypassed ? '0' : '1') + '\');renderPluginList(true)" title="Toggle">&#9679;</span>' +
+            '<span class="pn" onclick="cn(\'nativePluginShowGUI\',\'' + track + ',' + i + '\')" title="Toggle GUI">' + escHtml(p.name) + '</span>' +
+            '<span class="px" onclick="cn(\'nativePluginRemove\',\'' + track + ',' + i + '\');renderPluginList(true)" title="Remove">&times;</span>' +
             '</div>';
         }
       }
-      html += '<div class="pl-add" onclick="scanPlugins()">+ Add Plugin</div>';
+      html += '<div class="pl-add" onclick="_pluginTarget=' + track + ';scanPlugins()">+ Add Plugin</div>';
       list.innerHTML = html;
     });
   }
@@ -1276,12 +1383,15 @@ function filterPlugins() {
 }
 
 function scanPlugins() {
-  var p = cn('nativeScanClap', './plugins');
+  var target = _pluginTarget >= -1 ? _pluginTarget : STATE.sel;
+  _pluginTarget = target;
+  var p = cn('nativeScanClap', STATE.browserPath || '/usr/lib/clap');
   if (p && typeof p.then === 'function') {
     p.then(function(data) {
       STATE.pluginsCache = [];
       if (data && Array.isArray(data)) STATE.pluginsCache = data;
-      showPopup('<div style="font-size:12px;color:#b8b8ce;margin-bottom:6px;font-weight:600">CLAP Plugins</div>'
+      var title = target === -1 ? 'Master Plugins' : 'Track ' + (target + 1) + ' Plugins';
+      showPopup('<div style="font-size:12px;color:#b8b8ce;margin-bottom:6px;font-weight:600">' + title + '</div>'
         + '<input id="popup-search" type="text" placeholder="Search plugins..." oninput="filterPlugins()" autofocus>'
         + '<div id="popup-list"></div>');
       filterPlugins();
@@ -1294,20 +1404,48 @@ function scanPlugins() {
 function loadPlugin(i) {
   var pl = STATE.pluginsCache[i];
   if (!pl) return;
-  var path, id, name;
+  var target = _pluginTarget >= -1 ? _pluginTarget : STATE.sel;
   if (typeof pl === 'string') {
-    path = pl;
-    name = pl.split('/').pop().replace('.clap','');
-    id = name;
+    cn('nativePluginLoad', target + ',' + pl + ',' + pl.split('/').pop().replace('.clap',''));
   } else {
-    path = pl.path;
-    id = pl.id;
-    name = pl.name || id;
+    cn('nativePluginLoad', target + ',' + pl.path + ',' + (pl.id || pl.name));
   }
-  log('INFO', 'PLUGIN', 'Loading plugin: ' + name + ' from ' + path);
-  cn('nativePluginLoad', STATE.sel + ',' + path + ',' + id);
+  log('INFO', 'PLUGIN', 'Loading plugin -> ' + (target === -1 ? 'master' : 'track ' + target));
   closePopup();
+  _pluginTarget = -2;
   renderPluginList(true);
+}
+
+// ── SOFT CLIPPER GUI (builtin plugin popup) ──
+var _scGuiTrack = -1, _scGuiPlugin = -1, _scWasOpen = false;
+function showSoftClipperGUI(trackIdx, pluginIdx, drive) {
+  _scGuiTrack = trackIdx;
+  _scGuiPlugin = pluginIdx;
+  showPopup(
+    '<div style="font-size:12px;color:#b8b8ce;margin-bottom:8px;font-weight:600">Soft Clipper</div>' +
+    '<div style="display:flex;flex-direction:column;gap:8px;min-width:240px">' +
+      '<div style="display:flex;align-items:center;gap:8px">' +
+        '<span style="font-size:10px;color:#8888b0;width:30px">Drive</span>' +
+        '<input type="range" id="sc-drive" min="0.1" max="3" step="0.01" value="' + drive + '" ' +
+        'oninput="onScDrive(this.value)" style="flex:1">' +
+        '<span id="sc-drive-v" style="font-size:11px;color:#e4e4e8;min-width:32px;text-align:right">' + parseFloat(drive).toFixed(2) + '</span>' +
+      '</div>' +
+    '</div>' +
+    '<div style="margin-top:10px;text-align:center">' +
+      '<button onclick="closePopup();cn(\'nativePluginShowGUI\',\'' + trackIdx + ',' + pluginIdx + '\')" ' +
+      'style="background:#2a2a3a;color:#b8b8ce;border:1px solid #3a3a50;border-radius:4px;padding:4px 14px;cursor:pointer;font-size:11px">Close</button>' +
+    '</div>'
+  );
+  _scWasOpen = true;
+}
+function closeSoftClipperGUI() {
+  closePopup();
+  _scWasOpen = false;
+}
+function onScDrive(v) {
+  var sv = document.getElementById('sc-drive-v');
+  if (sv) sv.textContent = parseFloat(v).toFixed(2);
+  cn('nativeSetSoftClipperDrive', _scGuiTrack + ',' + _scGuiPlugin + ',' + v);
 }
 
 function showPopup(html) {

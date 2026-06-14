@@ -8,6 +8,8 @@
 #include <gdk/gdkx.h>
 #include <GL/glx.h>
 #include <set>
+#include <unordered_map>
+#include <deque>
 #include "clap/ext/timer-support.h"
 #include "clap/ext/params.h"
 #include <thread>
@@ -31,6 +33,7 @@ static webview::webview* g_wv = nullptr;
 static std::atomic<bool> g_running{true};
 static std::atomic<bool> g_pageReady{false};
 static std::atomic<uint32_t> g_uiDirty{0xFFFFFFFF};
+static std::atomic<int> g_exportBusy{0};
 constexpr uint32_t kDirtyExtended = 1u << 0;
 
 // ── PLUGIN GUI ── (must be before uiUpdateLoop)
@@ -42,11 +45,24 @@ struct PluginGuiState {
     Display* x11dpy;
     const clap_plugin_t* plugin;
     const clap_plugin_gui_t* gui;
+    // Index of self in g_pluginGuis (stable handle — see g_pluginGuisByHandle)
+    int handle;
 };
-static std::vector<PluginGuiState> g_pluginGuis;
+// g_pluginGuisByHandle maps a stable handle to an index into g_pluginGuis.
+// We use std::deque so push_back/push_front/erase at any iterator does NOT
+// invalidate references to other elements, and we keep a parallel stable
+// handle → deque index map for the destroy signal handler so it can locate
+// its own state safely even if the deque reallocates.
+static std::deque<PluginGuiState> g_pluginGuis;
+static std::unordered_map<int, int> g_pluginGuisByHandle; // handle -> deque index
+static std::mutex g_pluginGuisMutex;
+static int g_nextPluginGuiHandle = 1;
 
 static std::ofstream g_logFile;
 static std::mutex g_logMutex;
+// Separate crash log written from signal handlers via fprintf (async-
+// signal-safe). User reads this file to find backtraces after a crash.
+static FILE* g_crashLogFile = nullptr;
 
 static void initLogger() {
     std::lock_guard<std::mutex> lock(g_logMutex);
@@ -62,6 +78,15 @@ static void initLogger() {
     } else {
         fprintf(stderr, "[SYS] WARNING: Could not open log file %s\n", logName.c_str());
     }
+    // Separate crash log for signal-handler backtraces. Use C FILE* so we
+    // can write from a signal handler with fprintf (async-signal-safe).
+    std::string crashName = std::string("hydraw_crash_") + std::to_string(getpid()) + ".log";
+    g_crashLogFile = fopen(crashName.c_str(), "w");
+    if (g_crashLogFile) {
+        fprintf(g_crashLogFile, "=== Hydraw DAW crash log (pid=%d) ===\n", (int)getpid());
+        fflush(g_crashLogFile);
+        fprintf(stderr, "[SYS] Crash log at %s\n", crashName.c_str());
+    }
 }
 
 static void closeLogger() {
@@ -69,6 +94,11 @@ static void closeLogger() {
     if (g_logFile.is_open()) {
         g_logFile << "=== Hydraw DAW log ended ===" << std::endl;
         g_logFile.close();
+    }
+    if (g_crashLogFile) {
+        fprintf(g_crashLogFile, "=== Clean exit ===\n");
+        fclose(g_crashLogFile);
+        g_crashLogFile = nullptr;
     }
 }
 
@@ -89,6 +119,33 @@ static void log(const char* level, const std::string& msg) {
         g_logFile << line.str() << std::endl;
         g_logFile.flush();
     }
+}
+
+// dlog = "debug log". Writes ONLY to the log file (not stderr) so the
+// user does not have to scroll/copy-paste a console. Used for verbose
+// per-step traces in the plugin GUI open path, audio thread, etc.
+void dlog(const std::string& msg) {
+    auto now = std::chrono::system_clock::now();
+    auto t = std::chrono::system_clock::to_time_t(now);
+    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+        now.time_since_epoch()).count() % 1000;
+    char buf[64];
+    std::strftime(buf, sizeof(buf), "%H:%M:%S", std::localtime(&t));
+    std::ostringstream line;
+    line << "[" << buf << "." << std::to_string(ms) << "] [DBUG] " << msg;
+    std::lock_guard<std::mutex> lock(g_logMutex);
+    if (g_logFile.is_open()) {
+        g_logFile << line.str() << std::endl;
+        g_logFile.flush();
+    }
+}
+
+// Returns the current thread as "0x<hex>". Used in dlog messages to
+// identify which thread is doing the work.
+std::string threadId() {
+    std::ostringstream o;
+    o << "0x" << std::hex << (unsigned long)pthread_self();
+    return o.str();
 }
 
 static int safeStoi(const std::string& s, int def = 0) {
@@ -166,12 +223,10 @@ static std::string unwrapArg(const std::string& req) {
 
 static void uiUpdateLoop() {
     using namespace std::chrono_literals;
-    int tickCount = 0;
-    int s_lastTrackCount = 0;
+    int s_lastTrackCount = -1;
     while (g_running.load(std::memory_order_relaxed)) {
         std::this_thread::sleep_for(30ms);
         if (!g_engine || !g_wv || !g_pageReady.load(std::memory_order_acquire)) {
-            ++tickCount;
             continue;
         }
 
@@ -203,8 +258,9 @@ static void uiUpdateLoop() {
         js << ",[";
         for (int i = 0; i < tc; ++i) {
             if (i > 0) js << ",";
-            js << safePeak(std::max(g_engine->getTrack(i)->peakL.load(std::memory_order_relaxed),
-                           g_engine->getTrack(i)->peakR.load(std::memory_order_relaxed)));
+            Track* trk = g_engine->getTrack(i);
+            js << safePeak(std::max(trk ? trk->peakL.load(std::memory_order_relaxed) : 0.0f,
+                                     trk ? trk->peakR.load(std::memory_order_relaxed) : 0.0f));
         }
         js << "]";
 
@@ -251,27 +307,70 @@ static void uiUpdateLoop() {
             for (int i = 0; i < tc; ++i) {
                 if (i > 0) js << ",";
                 js << (int64_t)g_engine->getTrack(i)->clipStart.load(std::memory_order_relaxed);
-            }
+             }
+         }
+         js << "])";
+
+         // DIAGNOSTIC: log the full payload once on the first full send
+         // so we can verify the audioFrames array length matches tc.
+         if (sendFull) {
+             static int s_diagCount = 0;
+             if (s_diagCount < 3) {
+                 ++s_diagCount;
+                 std::string fullStr = js.str();
+                 log("DBUG", "uiUpdateLoop full payload (tc=" + std::to_string(tc) +
+                      ", len=" + std::to_string(fullStr.size()) + "): " + fullStr);
+             }
+         }
+
+         // Direct eval from the UI thread. The webview library's eval_impl
+         // calls webkit_web_view_evaluate_javascript which IS thread-safe
+         // in WebKitGTK 2.x (it marshals to the main thread internally).
+         // We must guard against g_wv being null AND against the webview
+         // main loop being dead (after w.run() returns). If the eval
+         // would block, we just skip this tick — the UI thread will exit
+         // at the next g_running check.
+         if (g_wv) {
+             // Wrap the eval so we never block the UI thread. The eval
+             // itself is async in WebKit 2.40+, but the underlying GDK
+             // send_event can deadlock if the main loop has exited.
+             g_wv->dispatch([jsStr = js.str()]() {
+                 if (g_wv) {
+                     g_wv->eval(jsStr);
+                 }
+             });
         }
-        js << "])";
 
-        g_wv->eval(js.str());
-        ++tickCount;
-
-        // Fire plugin timers so DPF/Pugl can render the GUI (on GTK windows)
-        for (auto& gs : g_pluginGuis) {
-            if (gs.plugin) {
+        // Fire plugin timers. CRITICAL: plugin->get_extension() and
+        // timer->on_timer() MUST be called on the main thread (per CLAP
+        // spec [main-thread]). PeakEater (and other plugins implementing
+        // clap.thread-check) abort if we call from the wrong thread.
+        // We dispatch the work via g_main_context_invoke, which runs
+        // on the main thread (the webview's main loop). The UI thread
+        // does NOT block on it.
+        g_main_context_invoke(nullptr, (GSourceFunc)(+[](void* ud) -> gboolean {
+            std::vector<const clap_plugin_t*>* plugins = nullptr;
+            std::vector<const clap_plugin_t*> localPlugins;
+            {
+                std::lock_guard<std::mutex> lk(g_pluginGuisMutex);
+                localPlugins.reserve(g_pluginGuis.size());
+                for (const auto& gs : g_pluginGuis) {
+                    if (gs.plugin) localPlugins.push_back(gs.plugin);
+                }
+                plugins = &localPlugins;
+            }
+            for (const auto* plugin : *plugins) {
                 auto* timer = (const clap_plugin_timer_support_t*)
-                    gs.plugin->get_extension(gs.plugin, CLAP_EXT_TIMER_SUPPORT);
+                    plugin->get_extension(plugin, CLAP_EXT_TIMER_SUPPORT);
                 if (timer && timer->on_timer)
-                     timer->on_timer(gs.plugin, 1);
+                    timer->on_timer(plugin, 1);
             }
-        }
+            return G_SOURCE_REMOVE;
+        }), nullptr);
 
         // Process pending flush requests from plugins (parameter sync)
         PluginChain::processPendingFlushes();
     }
-    
 }
 
 static std::string nativeLog(const std::string& req) {
@@ -401,6 +500,38 @@ static std::string nativeShowOpenDialog(const std::string& req) {
     return "\"" + escapeJson(d.result) + "\"";
 }
 
+// ── SOFT CLIPPER (builtin plugin) ──
+// Format: "trackIdx,pluginIdx,value"
+static std::string nativeSetSoftClipperDrive(const std::string& req) {
+    std::string a = unwrapArg(req);
+    auto p1 = a.find(',');
+    if (p1 == std::string::npos || !g_engine) return "null";
+    auto p2 = a.find(',', p1 + 1);
+    if (p2 == std::string::npos) return "null";
+    int trackIdx = safeStoi(a.substr(0, p1));
+    int pluginIdx = safeStoi(a.substr(p1 + 1, p2 - p1 - 1));
+    float drive = safeStof(a.substr(p2 + 1), 1.0f);
+    PluginChain* chain = g_engine->getPluginChain(trackIdx);
+    if (chain) {
+        chain->setDrive(pluginIdx, drive);
+        log("AUDIO", "softClipperDrive track=" + std::to_string(trackIdx) +
+            " plugin=" + std::to_string(pluginIdx) + " val=" + std::to_string(drive));
+    }
+    return "null";
+}
+
+// Format: "trackIdx,pluginIdx" → returns drive as string
+static std::string nativeGetSoftClipperDrive(const std::string& req) {
+    std::string a = unwrapArg(req);
+    auto p1 = a.find(',');
+    if (p1 == std::string::npos || !g_engine) return "1.0";
+    int trackIdx = safeStoi(a.substr(0, p1));
+    int pluginIdx = safeStoi(a.substr(p1 + 1));
+    PluginChain* chain = g_engine->getPluginChain(trackIdx);
+    if (chain) return std::to_string(chain->getDrive(pluginIdx));
+    return "1.0";
+}
+
 // ── PROJECT / EXPORT ──
 static std::string nativeSaveProject(const std::string& req) {
     std::string path = unwrapArg(req);
@@ -433,15 +564,17 @@ static std::string nativeExportAudio(const std::string& req) {
     }
     log("EXPORT", "start async path=" + wavPath + " sr=" + std::to_string(sampleRate) + " bd=" + std::to_string(bitDepth));
 
-    // Launch export on a worker thread so the web process doesn't hang
+    g_exportBusy.fetch_add(1, std::memory_order_release);
     std::thread t([wavPath, sampleRate, bitDepth]() {
         bool ok = g_engine ? g_engine->renderOffline(wavPath.c_str(), sampleRate, bitDepth) : false;
         log("EXPORT", std::string("done ") + (ok ? "OK" : "FAIL"));
-        // Notify JS from the worker thread (eval posts to main loop internally)
-        if (g_wv && g_running.load(std::memory_order_acquire)) {
-            g_wv->eval(("window.onExportDone && window.onExportDone(" +
-                        std::string(ok ? "'OK'" : "'FAIL'") + ")").c_str());
+        if (g_running.load(std::memory_order_acquire) && g_wv) {
+            // eval() is NOT thread-safe — dispatch to the main thread.
+            std::string js = std::string("window.onExportDone && window.onExportDone(") +
+                             (ok ? "'OK'" : "'FAIL'") + ")";
+            g_wv->dispatch([js]() { if (g_wv) g_wv->eval(js); });
         }
+        g_exportBusy.fetch_sub(1, std::memory_order_release);
     });
     t.detach();
     return "\"PENDING\"";
@@ -755,8 +888,27 @@ static std::string nativePluginBypass(const std::string& req) {
     return "null";
 }
 
-// Forward declaration for GUI cleanup in nativePluginRemove
+// Forward declarations for GUI helpers (defined later in this file)
 static PluginGuiState* findPluginGui(int trackIdx, int pluginIdx);
+static PluginGuiState* findPluginGuiByHandle(int handle);
+static bool erasePluginGuiByHandle(int handle, PluginGuiState* outState);
+
+// Close all open plugin GUI windows. Only destroys the GTK windows
+// (does NOT call plugin gui->hide/destroy — those may block on the
+// plugin's internal threads after the audio engine has stopped and
+// the host is shutting down). The plugins themselves are cleaned up
+// when the AudioEngine destructor runs at process exit.
+static void closeAllPluginGuis() {
+    std::vector<GtkWidget*> windows;
+    {
+        std::lock_guard<std::mutex> lk(g_pluginGuisMutex);
+        for (auto& g : g_pluginGuis)
+            if (g.window) windows.push_back(g.window);
+        g_pluginGuis.clear();
+        g_pluginGuisByHandle.clear();
+    }
+    for (auto* w : windows) gtk_widget_destroy(w);
+}
 
 static std::string nativePluginRemove(const std::string& req) {
     std::string a = unwrapArg(req);
@@ -766,16 +918,27 @@ static std::string nativePluginRemove(const std::string& req) {
     int pluginIdx = safeStoi(a.substr(pos + 1));
     PluginChain* chain = g_engine->getPluginChain(trackIdx);
     if (chain) {
-        // Close GUI if open before removing the plugin
-        auto* gs = findPluginGui(trackIdx, pluginIdx);
-        if (gs) {
-            if (gs->gui->hide) gs->gui->hide(gs->plugin);
-            if (gs->gui->destroy) gs->gui->destroy(gs->plugin);
-            if (gs->window) gtk_widget_destroy(gs->window);
-            for (size_t i = 0; i < g_pluginGuis.size(); ++i) {
-                if (g_pluginGuis[i].trackIdx == trackIdx && g_pluginGuis[i].pluginIdx == pluginIdx) {
-                    g_pluginGuis.erase(g_pluginGuis.begin() + i); break;
+        // Close GUI if open before removing the plugin. We need to do the
+        // CLAP destroy calls outside the GUI mutex to avoid a deadlock with
+        // the host callbacks (request_resize etc.) that also take it.
+        int handle = -1;
+        {
+            std::lock_guard<std::mutex> lk(g_pluginGuisMutex);
+            for (const auto& g : g_pluginGuis) {
+                if (g.trackIdx == trackIdx && g.pluginIdx == pluginIdx) {
+                    handle = g.handle;
+                    break;
                 }
+            }
+        }
+        if (handle > 0) {
+            PluginGuiState stolen;
+            if (erasePluginGuiByHandle(handle, &stolen)) {
+                if (stolen.plugin) {
+                    if (stolen.gui && stolen.gui->hide)  stolen.gui->hide(stolen.plugin);
+                    if (stolen.gui && stolen.gui->destroy) stolen.gui->destroy(stolen.plugin);
+                }
+                if (stolen.window) gtk_widget_destroy(stolen.window);
             }
         }
         chain->removePlugin(pluginIdx);
@@ -811,10 +974,11 @@ static std::string nativePageReady(const std::string&) {
     return "null";
 }
 
+struct ClapEntry {
+    std::string path, id, name;
+};
 static std::string nativeScanClap(const std::string& req) {
-    std::ostringstream js;
-    js << "[";
-    bool first = true;
+    std::vector<ClapEntry> entries;
     std::vector<std::string> paths = {req, "/usr/lib/clap", "/usr/local/lib/clap"};
     for (auto& dirPath : paths) {
         if (!std::filesystem::is_directory(dirPath)) continue;
@@ -827,16 +991,31 @@ static std::string nativeScanClap(const std::string& req) {
             for (uint32_t pi = 0; pi < count; ++pi) {
                 auto* desc = ClapHost::getPluginDescriptor(lib, pi);
                 if (!desc || !desc->id) continue;
-                if (!first) js << ",";
-                first = false;
-                js << "{"
-                   << "\"path\":\"" << escapeJson(libPath) << "\","
-                   << "\"id\":\"" << escapeJson(desc->id) << "\","
-                   << "\"name\":\"" << escapeJson(desc->name ? desc->name : desc->id) << "\""
-                   << "}";
+                entries.push_back({libPath, desc->id,
+                    desc->name ? std::string(desc->name) : std::string(desc->id)});
             }
             ClapHost::unloadLibrary(lib);
         }
+    }
+    // Sort by name case-insensitively
+    std::sort(entries.begin(), entries.end(), [](const ClapEntry& a, const ClapEntry& b) {
+        size_t len = std::min(a.name.size(), b.name.size());
+        for (size_t i = 0; i < len; ++i) {
+            int ca = std::tolower((unsigned char)a.name[i]);
+            int cb = std::tolower((unsigned char)b.name[i]);
+            if (ca != cb) return ca < cb;
+        }
+        return a.name.size() < b.name.size();
+    });
+    std::ostringstream js;
+    js << "[";
+    for (size_t i = 0; i < entries.size(); ++i) {
+        if (i > 0) js << ",";
+        js << "{"
+           << "\"path\":\"" << escapeJson(entries[i].path) << "\","
+           << "\"id\":\"" << escapeJson(entries[i].id) << "\","
+           << "\"name\":\"" << escapeJson(entries[i].name) << "\""
+           << "}";
     }
     js << "]";
     return js.str();
@@ -846,25 +1025,135 @@ static std::string nativeScanClap(const std::string& req) {
 
 
 static PluginGuiState* findPluginGui(int trackIdx, int pluginIdx) {
+    std::lock_guard<std::mutex> lk(g_pluginGuisMutex);
     for (auto& g : g_pluginGuis)
         if (g.trackIdx == trackIdx && g.pluginIdx == pluginIdx) return &g;
     return nullptr;
 }
 
+// Look up a GUI by its stable handle. Returns nullptr if the handle was
+// erased in the meantime. Safe to call from any thread.
+static PluginGuiState* findPluginGuiByHandle(int handle) {
+    if (handle <= 0) return nullptr;
+    std::lock_guard<std::mutex> lk(g_pluginGuisMutex);
+    auto it = g_pluginGuisByHandle.find(handle);
+    if (it == g_pluginGuisByHandle.end()) return nullptr;
+    int idx = it->second;
+    if (idx < 0 || idx >= (int)g_pluginGuis.size()) return nullptr;
+    if (g_pluginGuis[idx].handle != handle) return nullptr;
+    return &g_pluginGuis[idx];
+}
+
+static bool erasePluginGuiByHandle(int handle, PluginGuiState* outState) {
+    std::lock_guard<std::mutex> lk(g_pluginGuisMutex);
+    auto it = g_pluginGuisByHandle.find(handle);
+    if (it == g_pluginGuisByHandle.end()) return false;
+    int idx = it->second;
+    if (idx < 0 || idx >= (int)g_pluginGuis.size()) return false;
+    if (g_pluginGuis[idx].handle != handle) return false;
+    if (outState) *outState = g_pluginGuis[idx];
+    g_pluginGuis.erase(g_pluginGuis.begin() + idx);
+    g_pluginGuisByHandle.erase(it);
+    for (auto& kv : g_pluginGuisByHandle) {
+        if (kv.second > idx) --kv.second;
+    }
+    return true;
+}
+
+// Plugin host callbacks. The CLAP host callbacks may be invoked from any
+// thread the plugin chooses (commonly the audio thread or a timer thread).
+// GTK/WebKit must be touched only from the GTK main thread, so we always
+// dispatch to it via g_main_context_invoke.
+
+// Spec: request_resize is [thread-safe]. The plugin may call this from
+// any thread (audio thread, XEmbed thread, etc.). GTK requires GTK calls
+// on the main thread, so we dispatch to it via g_main_context_invoke.
+// We always return true (async accept) per spec:
+//   "If not called from the main thread, then a return value simply means
+//    that the host acknowledged the request and will process it asynchronously."
+struct ResizePayload { int handle; int w; int h; };
 static bool clap_host_request_resize(const clap_host_t* host, uint32_t width, uint32_t height) {
+    dlog("clap_host_request_resize: w=" + std::to_string(width) + " h=" + std::to_string(height) + " thread=" + threadId());
     intptr_t id = (intptr_t)host->host_data;
-    int trackIdx = (int)(id >> 16);
-    int pluginIdx = (int)(id & 0xFFFF);
-    auto* gs = findPluginGui(trackIdx, pluginIdx);
+    int handle = (int)(id & 0x7FFFFFFF);
+    if (handle <= 0) return false;
+    // Validate the handle exists before we accept. The lookup also
+    // serves as a barrier so we know the GUI was opened.
+    auto* gs = findPluginGuiByHandle(handle);
     if (!gs || !gs->window) return false;
-    gtk_window_resize(GTK_WINDOW(gs->window), (int)width, (int)height);
+    auto* p = new ResizePayload{handle, (int)width, (int)height};
+    g_main_context_invoke(nullptr, (GSourceFunc)(+[](void* ud) -> gboolean {
+        auto* pl = static_cast<ResizePayload*>(ud);
+        PluginGuiState* gs2 = findPluginGuiByHandle(pl->handle);
+        if (gs2 && gs2->window) {
+            gtk_window_resize(GTK_WINDOW(gs2->window), pl->w, pl->h);
+        }
+        delete pl;
+        return G_SOURCE_REMOVE;
+    }), p);
     return true;
 }
 
 static void clap_host_gui_resize_hints_changed(const clap_host_t* host) {}
 static bool clap_host_request_show(const clap_host_t* host) { return false; }
 static bool clap_host_request_hide(const clap_host_t* host) { return false; }
-static void clap_host_gui_closed(const clap_host_t* host, bool was_destroyed) {}
+
+// Called by the plugin when it has destroyed its own GUI (e.g. on sample
+// accurate teardown, or when the plugin window was closed by the OS
+// without our GTK window's destroy signal firing).
+//
+// CRITICAL: this can be called from ANY thread the plugin chooses (audio
+// thread, plugin timer thread, etc.). We MUST NOT touch GTK here and
+// MUST NOT take g_pluginGuisMutex if the main thread might already be
+// holding it (the destroy signal handler also takes it). Doing either
+// would deadlock the process — the symptom is a hard freeze the user
+// perceives as "the program crashed".
+//
+// The safe approach is to do nothing here. The cleanup is handled by:
+//   - The "destroy" signal handler in nativePluginShowGUI (main thread)
+//   - closeAllPluginGuis at shutdown (main thread)
+// If the plugin closes its GUI without our destroy signal firing we
+// just leak the (empty) GTK window — the user can close it manually.
+// Called by the plugin when it has destroyed its own GUI (e.g. on sample
+// accurate teardown, or when the plugin window was closed by the OS
+// without our GTK window's destroy signal firing).
+//
+// CRITICAL: this can be called from ANY thread the plugin chooses (audio
+// thread, plugin timer thread, etc.). We MUST NOT touch GTK here and
+// MUST NOT take g_pluginGuisMutex if the main thread might already be
+// holding it (the destroy signal handler also takes it). Doing either
+// would deadlock the process — the symptom is a hard freeze the user
+// perceives as "the program crashed".
+//
+// The safe approach is to dispatch the cleanup to the main thread via
+// g_main_context_invoke. The dispatched function runs on the main thread
+// (where GTK calls are safe) and takes the mutex.
+static void clap_host_gui_closed(const clap_host_t* host, bool was_destroyed) {
+    dlog("clap_host_gui_closed: was_destroyed=" + std::string(was_destroyed ? "true" : "false") + " thread=" + threadId());
+    if (!host) return;
+    intptr_t id = (intptr_t)host->host_data;
+    int handle = (int)(id & 0x7FFFFFFF);
+    if (handle <= 0) return;
+    // Encode the was_destroyed flag in the upper bit of the int (0 or 1).
+    int payload = handle | (was_destroyed ? 0x40000000 : 0);
+    g_main_context_invoke(nullptr, (GSourceFunc)(+[](void* ud) -> gboolean {
+        int p = GPOINTER_TO_INT(ud);
+        int h = p & 0x3FFFFFFF;
+        bool wasDestroyed = (p & 0x40000000) != 0;
+        dlog("clap_host_gui_closed lambda: handle=" + std::to_string(h) +
+             " wasDestroyed=" + std::string(wasDestroyed ? "true" : "false") +
+             " thread=" + threadId());
+        PluginGuiState stolen;
+        if (!erasePluginGuiByHandle(h, &stolen)) return G_SOURCE_REMOVE;
+        // Per spec: if was_destroyed is true, the host MUST call
+        // gui->destroy() to acknowledge the gui destruction.
+        if (wasDestroyed && stolen.plugin && stolen.gui && stolen.gui->destroy) {
+            stolen.gui->destroy(stolen.plugin);
+        }
+        if (stolen.window) gtk_widget_destroy(stolen.window);
+        return G_SOURCE_REMOVE;
+    }), GINT_TO_POINTER(payload));
+}
 
 extern const clap_host_gui_t s_hostGui = {
     clap_host_gui_resize_hints_changed,
@@ -880,82 +1169,177 @@ static std::string nativePluginShowGUI(const std::string& req) {
     if (p == std::string::npos || !g_engine) return "false";
     int trackIdx = safeStoi(a.substr(0, p));
     int pluginIdx = safeStoi(a.substr(p + 1));
-    if (findPluginGui(trackIdx, pluginIdx)) {
-        // Already open — close it (toggle off)
-        auto* gs = findPluginGui(trackIdx, pluginIdx);
-        if (gs->plugin && gs->gui->hide) gs->gui->hide(gs->plugin);
-        if (gs->plugin && gs->gui->destroy) gs->gui->destroy(gs->plugin);
-        if (gs->window) gtk_widget_destroy(gs->window);
-        for (size_t i = 0; i < g_pluginGuis.size(); ++i) {
-            if (g_pluginGuis[i].trackIdx == trackIdx && g_pluginGuis[i].pluginIdx == pluginIdx) {
-                g_pluginGuis.erase(g_pluginGuis.begin() + i); break;
-            }
-        }
-        log("PLUGIN", "GUI closed track " + std::to_string(trackIdx) + " plugin " + std::to_string(pluginIdx));
-        return "null";
-    }
+    dlog("nativePluginShowGUI enter track=" + std::to_string(trackIdx) +
+         " plugin=" + std::to_string(pluginIdx) + " thread=" + threadId());
 
     PluginChain* chain = g_engine->getPluginChain(trackIdx);
-    if (!chain) return "false";
+    if (!chain) { dlog("nativePluginShowGUI: chain is null"); return "false"; }
 
+    // Handle builtin plugins (soft clipper)
+    if (chain->isBuiltin(pluginIdx)) {
+        dlog("nativePluginShowGUI: builtin plugin path");
+        bool wasOpen = chain->getGuiOpen(pluginIdx);
+        float drive = chain->getDrive(pluginIdx);
+        chain->setGuiOpen(pluginIdx, !wasOpen);
+        if (g_wv) {
+            if (!wasOpen) {
+                std::string js = "showSoftClipperGUI(" + std::to_string(trackIdx) + "," +
+                                 std::to_string(pluginIdx) + "," +
+                                 std::to_string(drive) + ")";
+                g_wv->eval(js.c_str());
+                log("PLUGIN", "Builtin GUI shown track " + std::to_string(trackIdx) +
+                    " plugin " + std::to_string(pluginIdx));
+            } else {
+                g_wv->eval("closeSoftClipperGUI()");
+                log("PLUGIN", "Builtin GUI closed track " + std::to_string(trackIdx) +
+                    " plugin " + std::to_string(pluginIdx));
+            }
+        }
+        return "true";
+    }
+
+    // Already open? Close it (toggle off).
+    {
+        PluginGuiState stolen;
+        bool found = false;
+        {
+            std::lock_guard<std::mutex> lk(g_pluginGuisMutex);
+            for (auto it = g_pluginGuis.begin(); it != g_pluginGuis.end(); ++it) {
+                if (it->trackIdx == trackIdx && it->pluginIdx == pluginIdx) {
+                    stolen = *it;
+                    int erasedIdx = (int)(it - g_pluginGuis.begin());
+                    g_pluginGuis.erase(it);
+                    auto hit = g_pluginGuisByHandle.find(stolen.handle);
+                    if (hit != g_pluginGuisByHandle.end()) g_pluginGuisByHandle.erase(hit);
+                    for (auto& kv : g_pluginGuisByHandle)
+                        if (kv.second > erasedIdx) --kv.second;
+                    found = true;
+                    break;
+                }
+            }
+        }
+        if (found) {
+            dlog("nativePluginShowGUI: closing existing GUI (toggle off)");
+            if (stolen.plugin) {
+                if (stolen.gui && stolen.gui->hide)    stolen.gui->hide(stolen.plugin);
+                if (stolen.gui && stolen.gui->destroy) stolen.gui->destroy(stolen.plugin);
+            }
+            if (stolen.window) gtk_widget_destroy(stolen.window);
+            log("PLUGIN", "GUI closed track " + std::to_string(trackIdx) +
+                " plugin " + std::to_string(pluginIdx));
+            return "null";
+        }
+    }
+
+    dlog("nativePluginShowGUI: getting plugin ptr");
     const clap_plugin_t* plugin = chain->getPlugin(pluginIdx);
-    if (!plugin) return "false";
+    if (!plugin) { dlog("nativePluginShowGUI: plugin ptr is null"); return "false"; }
 
+    dlog("nativePluginShowGUI: calling get_extension(CLAP_EXT_GUI)");
     const clap_plugin_gui_t* gui = (const clap_plugin_gui_t*)
         plugin->get_extension(plugin, CLAP_EXT_GUI);
-    if (!gui) return "false";
-    if (!gui->is_api_supported || !gui->is_api_supported(plugin, CLAP_WINDOW_API_X11, false))
+    if (!gui) { dlog("nativePluginShowGUI: no CLAP_EXT_GUI"); log("PLUGIN", "GUI: no CLAP_EXT_GUI"); return "false"; }
+    if (!gui->is_api_supported) { dlog("nativePluginShowGUI: no is_api_supported"); log("PLUGIN", "GUI: no is_api_supported"); return "false"; }
+    if (!gui->is_api_supported(plugin, CLAP_WINDOW_API_X11, false)) {
+        dlog("nativePluginShowGUI: X11 not supported");
+        log("PLUGIN", "GUI: X11 not supported track=" + std::to_string(trackIdx));
         return "false";
+    }
 
+    // Stable handle for the plugin's host callbacks (fixes master chain
+    // sign-extension bug where (trackIdx<<16) with trackIdx=-1 overflowed).
+    int handle = g_nextPluginGuiHandle++;
+    dlog("nativePluginShowGUI: handle=" + std::to_string(handle) + " calling setPluginHostData");
+    chain->setPluginHostData(pluginIdx, (void*)(intptr_t)handle);
+
+    dlog("nativePluginShowGUI: creating GtkWindow");
     GtkWidget* win = gtk_window_new(GTK_WINDOW_TOPLEVEL);
-    GtkWidget* glArea = gtk_gl_area_new();
-    gtk_container_add(GTK_CONTAINER(win), glArea);
-    gtk_widget_realize(glArea);
-    gtk_container_remove(GTK_CONTAINER(win), glArea);
-
+    // GLArea trick: force a GL-capable visual so JUCE plugins embed.
+    {
+        GtkWidget* glArea = gtk_gl_area_new();
+        if (glArea) {
+            gtk_container_add(GTK_CONTAINER(win), glArea);
+            gtk_widget_realize(glArea);
+            gtk_container_remove(GTK_CONTAINER(win), glArea);
+        }
+    }
     const char* title = plugin->desc && plugin->desc->name ? plugin->desc->name : "Plugin";
     gtk_window_set_title(GTK_WINDOW(win), title);
     gtk_window_set_default_size(GTK_WINDOW(win), 800, 600);
     gtk_widget_realize(win);
+    dlog("nativePluginShowGUI: window realized");
 
     GdkWindow* gdkWin = gtk_widget_get_window(win);
-    if (!gdkWin || !GDK_IS_X11_WINDOW(gdkWin)) { gtk_widget_destroy(win); return "false"; }
+    if (!gdkWin || !GDK_IS_X11_WINDOW(gdkWin)) {
+        dlog("nativePluginShowGUI: not an X11 GdkWindow, aborting");
+        gtk_widget_destroy(win); return "false";
+    }
     clap_xwnd xid = GDK_WINDOW_XID(gdkWin);
+    dlog("nativePluginShowGUI: xid=" + std::to_string((unsigned long)xid));
 
-    // Connect destroy signal (packed track/plugin index as user data)
-    void* signalData = (void*)(intptr_t)((trackIdx << 16) | pluginIdx);
-
-    // Create plugin GUI
-    if (!gui->create || !gui->create(plugin, CLAP_WINDOW_API_X11, false)) { gtk_widget_destroy(win); return "false"; }
+    dlog("nativePluginShowGUI: calling gui->create");
+    if (!gui->create || !gui->create(plugin, CLAP_WINDOW_API_X11, false)) {
+        dlog("nativePluginShowGUI: gui->create failed");
+        gtk_widget_destroy(win); return "false";
+    }
+    dlog("nativePluginShowGUI: gui->create OK");
     if (gui->set_scale) gui->set_scale(plugin, 1.0);
     uint32_t gw = 800, gh = 600;
     if (gui->get_size) gui->get_size(plugin, &gw, &gh);
+    if (gw < 32) gw = 32;
+    if (gh < 32) gh = 32;
     gtk_window_resize(GTK_WINDOW(win), (int)gw, (int)gh);
+    dlog("nativePluginShowGUI: gui size=" + std::to_string(gw) + "x" + std::to_string(gh));
 
     clap_window_t cw;
     cw.api = CLAP_WINDOW_API_X11;
     cw.x11 = xid;
-    if (!gui->set_parent(plugin, &cw)) { gui->destroy(plugin); gtk_widget_destroy(win); return "false"; }
-    if (!gui->show(plugin)) { gui->destroy(plugin); gtk_widget_destroy(win); return "false"; }
+    dlog("nativePluginShowGUI: calling gui->set_parent");
+    if (!gui->set_parent || !gui->set_parent(plugin, &cw)) {
+        dlog("nativePluginShowGUI: gui->set_parent failed");
+        if (gui->destroy) gui->destroy(plugin);
+        gtk_widget_destroy(win);
+        return "false";
+    }
+    dlog("nativePluginShowGUI: gui->set_parent OK");
+    dlog("nativePluginShowGUI: calling gui->show");
+    if (!gui->show || !gui->show(plugin)) {
+        dlog("nativePluginShowGUI: gui->show failed");
+        if (gui->destroy) gui->destroy(plugin);
+        gtk_widget_destroy(win);
+        return "false";
+    }
+    dlog("nativePluginShowGUI: gui->show OK");
 
-    // Push state BEFORE connecting destroy signal so findPluginGui finds it
-    g_pluginGuis.push_back({trackIdx, pluginIdx, win, 0, nullptr, plugin, gui});
-    g_signal_connect(win, "destroy", G_CALLBACK(+[](GtkWidget*, gpointer data) {
-        intptr_t id = (intptr_t)data;
-        int t = (int)(id >> 16);
-        int p = (int)(id & 0xFFFF);
-        auto* gs = findPluginGui(t, p);
-        if (!gs) return;
-        if (gs->gui->hide) gs->gui->hide(gs->plugin);
-        if (gs->gui->destroy) gs->gui->destroy(gs->plugin);
-        for (size_t i = 0; i < g_pluginGuis.size(); ++i) {
-            if (g_pluginGuis[i].trackIdx == t && g_pluginGuis[i].pluginIdx == p) {
-                g_pluginGuis.erase(g_pluginGuis.begin() + i); break;
+    // Push state and connect destroy signal (like the original, but with
+    // the stable handle instead of the buggy (trackIdx<<16)|pluginIdx).
+    {
+        std::lock_guard<std::mutex> lk(g_pluginGuisMutex);
+        PluginGuiState s;
+        s.trackIdx = trackIdx;  s.pluginIdx = pluginIdx;
+        s.window = win;  s.x11win = 0;  s.x11dpy = nullptr;
+        s.plugin = plugin;  s.gui = gui;  s.handle = handle;
+        g_pluginGuis.push_back(s);
+        int idx = (int)g_pluginGuis.size() - 1;
+        g_pluginGuisByHandle[handle] = idx;
+    }
+    g_signal_connect_data(win, "destroy",
+        G_CALLBACK(+[](GtkWidget*, gpointer data) {
+            int h = GPOINTER_TO_INT(data);
+            dlog("destroy signal: handle=" + std::to_string(h) + " thread=" + threadId());
+            PluginGuiState stolen;
+            if (!erasePluginGuiByHandle(h, &stolen)) return;
+            if (stolen.plugin) {
+                if (stolen.gui && stolen.gui->hide)    stolen.gui->hide(stolen.plugin);
+                if (stolen.gui && stolen.gui->destroy) stolen.gui->destroy(stolen.plugin);
             }
-        }
-    }), signalData);
+        }),
+        GINT_TO_POINTER(handle), nullptr, (GConnectFlags)0);
 
+    dlog("nativePluginShowGUI: calling gtk_widget_show");
     gtk_widget_show(win);
+    dlog("nativePluginShowGUI: gtk_widget_show returned — function about to return");
+
     log("PLUGIN", "GUI shown track " + std::to_string(trackIdx) + " plugin " + std::to_string(pluginIdx));
     return "true";
 }
@@ -966,22 +1350,24 @@ static std::string nativePluginHideGUI(const std::string& req) {
     if (p == std::string::npos || !g_engine) return "false";
     int trackIdx = safeStoi(a.substr(0, p));
     int pluginIdx = safeStoi(a.substr(p + 1));
-    auto* gs = findPluginGui(trackIdx, pluginIdx);
-    if (!gs) return "false";
-    if (gs->plugin && gs->gui->hide) gs->gui->hide(gs->plugin);
-    if (gs->plugin && gs->gui->destroy) gs->gui->destroy(gs->plugin);
-    if (gs->window) gtk_widget_destroy(gs->window);
-    if (gs->x11dpy && gs->x11win) {
-        XDestroyWindow(gs->x11dpy, gs->x11win);
-        XCloseDisplay(gs->x11dpy);
-    }
-    // Remove from vector
-    for (size_t i = 0; i < g_pluginGuis.size(); ++i) {
-        if (g_pluginGuis[i].trackIdx == trackIdx && g_pluginGuis[i].pluginIdx == pluginIdx) {
-            g_pluginGuis.erase(g_pluginGuis.begin() + i);
-            break;
+    int handle = -1;
+    {
+        std::lock_guard<std::mutex> lk(g_pluginGuisMutex);
+        for (const auto& g : g_pluginGuis) {
+            if (g.trackIdx == trackIdx && g.pluginIdx == pluginIdx) {
+                handle = g.handle;
+                break;
+            }
         }
     }
+    if (handle <= 0) return "false";
+    PluginGuiState stolen;
+    if (!erasePluginGuiByHandle(handle, &stolen)) return "false";
+    if (stolen.plugin) {
+        if (stolen.gui && stolen.gui->hide)    stolen.gui->hide(stolen.plugin);
+        if (stolen.gui && stolen.gui->destroy) stolen.gui->destroy(stolen.plugin);
+    }
+    if (stolen.window) gtk_widget_destroy(stolen.window);
     log("PLUGIN", "GUI hidden for track " + std::to_string(trackIdx) + " plugin " + std::to_string(pluginIdx));
     return "null";
 }
@@ -1089,20 +1475,57 @@ static void onDragDataReceived(GtkWidget* widget, GdkDragContext* context,
 }
 
 static void crashHandler(int sig) {
+    // ONLY async-signal-safe calls below. No std::mutex, no std::ofstream,
+    // no malloc past the initial backtrace() call. fprintf to stderr and
+    // to the pre-opened crash log file is safe.
     void* buf[32];
     int n = backtrace(buf, 32);
-    fprintf(stderr, "SIGNAL %d caught! Backtrace:\n", sig);
     char** symbols = backtrace_symbols(buf, n);
-    for (int i = 0; i < n; ++i)
-        fprintf(stderr, "  %s\n", symbols[i]);
-    free(symbols);
-    _exit(1);
+    fprintf(stderr, "\n=== CRASH (signal %d) ===\n", sig);
+    if (g_crashLogFile) {
+        fprintf(g_crashLogFile, "\n=== CRASH (signal %d) ===\n", sig);
+    }
+    if (symbols) {
+        for (int i = 0; i < n; ++i) {
+            fprintf(stderr, "  %s\n", symbols[i]);
+            if (g_crashLogFile) {
+                fprintf(g_crashLogFile, "  %s\n", symbols[i]);
+            }
+        }
+        free(symbols);
+    } else {
+        fprintf(stderr, "  (backtrace_symbols failed)\n");
+        if (g_crashLogFile) {
+            fprintf(g_crashLogFile, "  (backtrace_symbols failed)\n");
+        }
+    }
+    if (g_crashLogFile) fflush(g_crashLogFile);
+    fflush(stderr);
+    _exit(128 + sig);
 }
 
 int main() {
+    // CRITICAL: do this BEFORE anything else. PluginChain's static
+    // clap_host.thread-check reads g_mainThreadId to verify the host is
+    // calling on the right thread. If we set it lazily (on first call)
+    // and the first call comes from the plugin's XEmbed thread, the
+    // baseline gets poisoned and every subsequent is_main_thread()
+    // check returns the wrong answer.
+    PluginChain::initMainThreadId();
+
     signal(SIGSEGV, crashHandler);
+    signal(SIGABRT, crashHandler);
+    signal(SIGBUS,  crashHandler);
+    signal(SIGTERM, +[](int) { _exit(0); });
+    signal(SIGINT,  +[](int) { _exit(0); });
     initLogger();
-    setenv("GDK_BACKEND", "x11", 0); // Force X11 for CLAP plugin GUI embedding
+    // Force X11 for CLAP plugin GUI embedding. The third argument MUST be 1
+    // (overwrite=1) so that the value sticks even if the user has
+    // GDK_BACKEND=wayland in their environment. With overwrite=0, GTK would
+    // silently fall back to Wayland and X11 plugin embedding would not work
+    // — the plugin GUI would never appear because Wayland has no equivalent
+    // to XEmbed.
+    setenv("GDK_BACKEND", "x11", 1);
     log("SYS", "=== Hydraw DAW v" HYDRAW_VERSION " starting ===");
 
     AudioEngine audioEngine;
@@ -1168,8 +1591,10 @@ int main() {
     w.bind("nativeSaveProject", nativeSaveProject);
     w.bind("nativeLoadProject", nativeLoadProject);
     w.bind("nativeExportAudio", nativeExportAudio);
+    w.bind("nativeSetSoftClipperDrive", nativeSetSoftClipperDrive);
+    w.bind("nativeGetSoftClipperDrive", nativeGetSoftClipperDrive);
 
-    log("SYS", "All 31 native bindings registered");
+    log("SYS", "All 33 native bindings registered");
 
     w.init(
         "window.updateUIFromNative=function(){};"
@@ -1181,8 +1606,17 @@ int main() {
 
     std::filesystem::path htmlPath = std::filesystem::current_path() / "assets" / "index.html";
     if (std::filesystem::exists(htmlPath)) {
-        w.navigate(("file://" + htmlPath.string()).c_str());
-        log("SYS", "Navigated to " + htmlPath.string());
+        // Cache-buster: WebKitGTK caches file:// content by URL. We tried
+        // using the file's mtime but std::filesystem::file_clock on
+        // glibc has an epoch around year 2117, so duration_cast<seconds>
+        // gives a NEGATIVE number that WebKit treats as the same URL
+        // across restarts. Use system_clock::now() (epoch 1970) instead
+        // so the query is always a positive, unique value per run.
+        auto now_s = std::chrono::duration_cast<std::chrono::seconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count();
+        std::string url = "file://" + htmlPath.string() + "?v=" + std::to_string(now_s);
+        w.navigate(url.c_str());
+        log("SYS", "Navigated to " + htmlPath.string() + " (cache-buster v=" + std::to_string(now_s) + ")");
     } else {
         log("SYS", "FATAL: Could not find " + htmlPath.string());
         g_running.store(false);
@@ -1196,10 +1630,43 @@ int main() {
     w.run();
 
     log("SYS", "Window closed, shutting down...");
-    g_running.store(false);
-    uiThread.join();
+
+    // 1) Stop the audio engine first so the audio thread is no longer
+    //    calling into plugins. ma_device_uninit blocks until the audio
+    //    thread is fully done.
+    log("SYS", "shutdown: stopping audio engine...");
     audioEngine.stop();
+    log("SYS", "shutdown: audio engine stopped, uninit...");
     audioEngine.shutdown();
+    log("SYS", "shutdown: audio engine shutdown complete");
+
+    // 2) Signal the UI thread to stop and wait for any in-flight export.
+    //    This MUST happen BEFORE we touch g_pluginGuis* (which the UI
+    //    thread iterates every 30ms) or closeAllPluginGuis (which clears
+    //    the maps) — otherwise concurrent iteration would corrupt the
+    //    unordered_map and produce a "corrupted double-linked list" abort.
+    log("SYS", "shutdown: stopping UI thread...");
+    g_running.store(false);
+    int waitIters = 0;
+    while (g_exportBusy.load(std::memory_order_acquire) > 0 && waitIters < 200) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        ++waitIters;
+    }
+    log("SYS", "shutdown: joining UI thread...");
+    uiThread.join();
+    log("SYS", "shutdown: UI thread joined");
+
+    // 3) Tear down every plugin GUI window. Safe now because the UI
+    //    thread is dead — no concurrent access to g_pluginGuis*.
+    log("SYS", "shutdown: closing plugin GUIs...");
+    closeAllPluginGuis();
+    log("SYS", "shutdown: plugin GUIs closed, pumping events...");
+    for (int i = 0; i < 5; ++i) {
+        int iterCount = 0;
+        while (g_main_context_iteration(nullptr, FALSE) && ++iterCount < 100) {}
+    }
+    log("SYS", "shutdown: events flushed");
+
     g_wv = nullptr;
     g_engine = nullptr;
 

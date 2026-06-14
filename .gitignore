@@ -2,6 +2,8 @@ build/
 cmake-build-*/
 extern/
 plugins/
+!plugins/*.clap
+!plugins/PeakEater.clap
 *.o
 *.obj
 *.exe

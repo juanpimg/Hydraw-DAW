@@ -61,3 +61,19 @@ target_link_libraries(hydraw_daw PRIVATE
 if(UNIX AND NOT APPLE)
     target_link_libraries(hydraw_daw PRIVATE asound)
 endif()
+
+# Ship bundled CLAP plugins next to the binary so the audio engine can
+# preload them via a relative path. The runtime expects "plugins/<x>.clap"
+# relative to the CWD; copying the dir into $<TARGET_FILE_DIR> keeps that
+# invariant when launching directly from the build tree. For installed
+# builds, packagers should ship the plugins/ directory alongside the
+# binary (or update the runtime search path).
+if(EXISTS "${CMAKE_SOURCE_DIR}/plugins")
+    add_custom_command(TARGET hydraw_daw POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory
+            $<TARGET_FILE_DIR:hydraw_daw>/plugins
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            ${CMAKE_SOURCE_DIR}/plugins
+            $<TARGET_FILE_DIR:hydraw_daw>/plugins
+    )
+endif()

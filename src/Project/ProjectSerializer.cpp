@@ -167,6 +167,31 @@ bool ProjectSerializer::save(const char* path, AudioEngine* engine) {
     json << "  \"masterVolume\": " << engine->getMaster()->volume.load(std::memory_order_relaxed) << ",\n";
     json << "  \"playhead\": " << engine->getPlayhead() << ",\n";
 
+    // Master plugin chain (trackIndex = -1). Same shape as a track's
+    // "plugins" array. Plugins write their state to a UTF-8 XML blob
+    // via the CLAP state extension; we embed it as a JSON string.
+    json << "  \"master\": {\n";
+    json << "    \"plugins\": [\n";
+    {
+        PluginChain* mchain = engine->getPluginChain(-1);
+        int mpc = mchain ? mchain->getPluginCount() : 0;
+        for (int p = 0; p < mpc; ++p) {
+            json << "      {\n";
+            json << "        \"path\": \"" << ::escapeJson(mchain->getPluginPath(p)) << "\",\n";
+            json << "        \"id\": \"" << ::escapeJson(mchain->getPluginId(p)) << "\",\n";
+            json << "        \"bypassed\": " << (mchain->isBypassed(p) ? "true" : "false");
+            std::string st = mchain->saveState(p);
+            if (!st.empty()) {
+                json << ",\n        \"state\": \"" << ::escapeJson(st) << "\"\n";
+            } else {
+                json << "\n";
+            }
+            json << "      }" << (p < mpc - 1 ? "," : "") << "\n";
+        }
+    }
+    json << "    ]\n";
+    json << "  },\n";
+
     int tc = engine->getTrackCount();
     json << "  \"tracks\": [\n";
     for (int i = 0; i < tc; ++i) {
@@ -191,7 +216,13 @@ bool ProjectSerializer::save(const char* path, AudioEngine* engine) {
             json << "        {\n";
             json << "          \"path\": \"" << ::escapeJson(chain->getPluginPath(p)) << "\",\n";
             json << "          \"id\": \"" << ::escapeJson(chain->getPluginId(p)) << "\",\n";
-            json << "          \"bypassed\": " << (chain->isBypassed(p) ? "true" : "false") << "\n";
+            json << "          \"bypassed\": " << (chain->isBypassed(p) ? "true" : "false");
+            std::string st = chain->saveState(p);
+            if (!st.empty()) {
+                json << ",\n          \"state\": \"" << ::escapeJson(st) << "\"\n";
+            } else {
+                json << "\n";
+            }
             json << "        }" << (p < pc - 1 ? "," : "") << "\n";
         }
         json << "      ]\n";
@@ -247,6 +278,65 @@ bool ProjectSerializer::load(const char* path, AudioEngine* engine) {
         t0->clipStart.store(0, std::memory_order_relaxed);
     }
 
+    // Restore master chain BEFORE tracks (so the audio thread sees the
+    // master changes first). NOTE: we APPEND to the existing master
+    // chain rather than replace it. This means if the init() preload
+    // already added PeakEater, and the project also defines master
+    // plugins, BOTH will end up in the master chain. The user can
+    // bypass/remove duplicates from the FX UI. Replacing the master
+    // chain cleanly is a separate refactor (shared_ptr Snapshot
+    // ownership) — left for a follow-up.
+    {
+        std::string mPluginsArr = extractArray(json, "master");
+        // The master object is not an array, so extractArray returns "".
+        // We need a tiny inline parser: find "master": { ... } and pull
+        // out the "plugins" sub-array.
+        if (mPluginsArr.empty()) {
+            std::string masterKey = "\"master\":";
+            auto mp = json.find(masterKey);
+            if (mp != std::string::npos) {
+                auto brace = json.find('{', mp + masterKey.size());
+                if (brace != std::string::npos) {
+                    int depth = 1;
+                    size_t start = brace;
+                    size_t end = brace + 1;
+                    while (end < json.size() && depth > 0) {
+                        if (json[end] == '{') ++depth;
+                        else if (json[end] == '}') --depth;
+                        else if (json[end] == '"') {
+                            ++end;
+                            while (end < json.size() && !(json[end] == '"' && json[end-1] != '\\')) ++end;
+                        }
+                        ++end;
+                    }
+                    std::string masterObj = json.substr(start, end - start);
+                    std::string mpArr = extractArray(masterObj, "plugins");
+                    if (!mpArr.empty()) {
+                        auto pluginObjects = splitObjects(mpArr);
+                        PluginChain* mchain = engine->getPluginChain(-1);
+                        if (mchain) {
+                            int baseIdx = mchain->getPluginCount();
+                            for (size_t p = 0; p < pluginObjects.size(); ++p) {
+                                std::string plPath = extractString(pluginObjects[p], "path");
+                                std::string plId = extractString(pluginObjects[p], "id");
+                                bool bypassed = extractBool(pluginObjects[p], "bypassed");
+                                std::string plState = extractString(pluginObjects[p], "state");
+                                if (!plPath.empty() && !plId.empty()) {
+                                    bool ok = mchain->addPlugin(plPath.c_str(), plId.c_str());
+                                    if (ok) {
+                                        if (bypassed) mchain->setBypass((int)baseIdx, true);
+                                        if (!plState.empty()) mchain->loadState((int)baseIdx, plState);
+                                        ++baseIdx;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     // Add tracks to match saved count
     for (size_t i = 1; i < trackObjects.size(); ++i)
         engine->addTrack();
@@ -277,14 +367,19 @@ bool ProjectSerializer::load(const char* path, AudioEngine* engine) {
         if (!pluginsArr.empty()) {
             auto pluginObjects = splitObjects(pluginsArr);
             PluginChain* chain = engine->getPluginChain(i);
+            int baseIdx = chain ? chain->getPluginCount() : 0;
             for (size_t p = 0; p < pluginObjects.size(); ++p) {
                 std::string plPath = extractString(pluginObjects[p], "path");
                 std::string plId = extractString(pluginObjects[p], "id");
                 bool bypassed = extractBool(pluginObjects[p], "bypassed");
+                std::string plState = extractString(pluginObjects[p], "state");
                 if (!plPath.empty() && !plId.empty()) {
                     bool ok = chain->addPlugin(plPath.c_str(), plId.c_str());
-                    if (ok && bypassed)
-                        chain->setBypass((int)p, true);
+                    if (ok) {
+                        if (bypassed) chain->setBypass(baseIdx, true);
+                        if (!plState.empty()) chain->loadState(baseIdx, plState);
+                        ++baseIdx;
+                    }
                 }
             }
         }
