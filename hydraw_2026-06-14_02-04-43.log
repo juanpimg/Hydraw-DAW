@@ -1,0 +1,25 @@
+=== Hydraw DAW log started at 2026-06-14_02-04-43 ===
+[02:04:43.207] [SYS] === Hydraw DAW starting ===
+[02:04:43.358] [SYS] Audio engine initialized and started
+[02:04:43.489] [SYS] Native drop interceptor registered
+[02:04:43.489] [SYS] All 26 native bindings registered
+[02:04:43.491] [SYS] Navigated to /home/jp/Escritorio/Proyectos/DAW/assets/index.html
+[02:04:43.491] [SYS] Entering webview main loop
+[02:04:43.519] [DBG] uiUpdateLoop: waiting for pageReady...
+[02:04:43.604] [DND] decide-policy NAVIGATION for URI: file:///home/jp/Escritorio/Proyectos/DAW/assets/index.html
+[02:04:43.754] [SYS] pageReady signal received
+[02:04:44.242] [DIR] getCwd -> /home/jp/Escritorio/Proyectos/DAW
+[02:04:44.314] [INFO] [SYS] Hydraw DAW UI loaded; waiting for native telemetry...
+[02:04:44.314] [INFO] [LOOP] First telemetry received — rendering tracks & mixer
+[02:04:44.314] [DEBUG] [UI] renderTrackList: 1 tracks
+[02:04:44.314] [DEBUG] [UI] renderMixerChannels: 1 channels
+[02:04:44.314] [INFO] [LOOP] Initializing browser...
+[02:04:44.314] [INFO] [BROWSER] initBrowser: getting CWD...
+[02:04:44.314] [DEBUG] [BRIDGE] nativeGetCwd()
+[02:04:44.314] [DEBUG] [BRIDGE] nativeGetCwd resolved: \"/home/jp/Escritorio/Proyectos/DAW\"
+[02:04:44.314] [INFO] [BROWSER] CWD = \"/home/jp/Escritorio/Proyectos/DAW\" (type=string)
+[02:04:44.314] [INFO] [BROWSER] Loading directory: /home/jp/Escritorio/Proyectos/DAW
+[02:04:44.315] [DIR] listDir '/home/jp/Escritorio/Proyectos/DAW' -> 19 entries
+[02:04:44.745] [DEBUG] [BRIDGE] nativeListDir(/home/jp/Escritorio/Proyectos/DAW)
+[02:04:44.746] [DEBUG] [BRIDGE] nativeListDir resolved: [{\"name\":\"contrib\";\"dir\":true;\"ext\":\"\"};{\"name\":\"extern\";\"dir\":true;\"ext\":\"\"};{\"name\":\"src\";\"dir\":true;\"ext\":\"\"};{\"name\"
+[02:04:44.746] [INFO] [BROWSER] Loaded 19 entries from /home/jp/Escritorio/Proyectos/DAW

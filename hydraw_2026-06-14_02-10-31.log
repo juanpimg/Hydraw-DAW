@@ -1,0 +1,52 @@
+=== Hydraw DAW log started at 2026-06-14_02-10-31 ===
+[02:10:31.262] [SYS] === Hydraw DAW starting ===
+[02:10:31.341] [SYS] Audio engine initialized and started
+[02:10:31.440] [SYS] Native drop interceptor registered
+[02:10:31.440] [SYS] All 26 native bindings registered
+[02:10:31.442] [SYS] Navigated to /home/jp/Escritorio/Proyectos/DAW/assets/index.html
+[02:10:31.442] [SYS] Entering webview main loop
+[02:10:31.470] [DBG] uiUpdateLoop: waiting for pageReady...
+[02:10:31.529] [DND] decide-policy NAVIGATION for URI: file:///home/jp/Escritorio/Proyectos/DAW/assets/index.html
+[02:10:31.656] [SYS] pageReady signal received
+[02:10:32.91] [DIR] getCwd -> /home/jp/Escritorio/Proyectos/DAW
+[02:10:32.156] [INFO] [SYS] Hydraw DAW UI loaded; waiting for native telemetry...
+[02:10:32.156] [INFO] [LOOP] First telemetry received — rendering tracks & mixer
+[02:10:32.156] [DEBUG] [UI] renderTrackList: 1 tracks
+[02:10:32.156] [DEBUG] [UI] renderMixerChannels: 1 channels
+[02:10:32.156] [INFO] [LOOP] Initializing browser...
+[02:10:32.156] [INFO] [BROWSER] initBrowser: getting CWD...
+[02:10:32.156] [DEBUG] [BRIDGE] nativeGetCwd()
+[02:10:32.156] [DEBUG] [BRIDGE] nativeGetCwd resolved: \"/home/jp/Escritorio/Proyectos/DAW\"
+[02:10:32.156] [INFO] [BROWSER] CWD = \"/home/jp/Escritorio/Proyectos/DAW\" (type=string)
+[02:10:32.156] [INFO] [BROWSER] Loading directory: /home/jp/Escritorio/Proyectos/DAW
+[02:10:32.157] [DIR] listDir '/home/jp/Escritorio/Proyectos/DAW' -> 22 entries
+[02:10:32.653] [DEBUG] [BRIDGE] nativeListDir(/home/jp/Escritorio/Proyectos/DAW)
+[02:10:32.653] [DEBUG] [BRIDGE] nativeListDir resolved: [{\"name\":\"contrib\";\"dir\":true;\"ext\":\"\"};{\"name\":\"extern\";\"dir\":true;\"ext\":\"\"};{\"name\":\"src\";\"dir\":true;\"ext\":\"\"};{\"name\"
+[02:10:32.653] [INFO] [BROWSER] Loaded 22 entries from /home/jp/Escritorio/Proyectos/DAW
+[02:10:34.610] [PLUGIN] scanClap done
+[02:10:34.653] [DEBUG] [BRIDGE] nativeScanClap(./plugins)
+[02:10:34.653] [DEBUG] [BRIDGE] nativeScanClap resolved: [{\"path\":\"/usr/lib/clap/ZaMaximX2.clap\";\"id\":\"com.zamaudio.ZaMaximX2\";\"name\":\"ZaMaximX2\"};{\"path\":\"/usr/lib/clap/ZamDyna
+[02:10:36.605] [PLUGIN] load track=0 lib=/usr/lib/clap/ZamDynamicEQ.clap id=com.zamaudio.ZamDynamicEQ
+[02:10:36.606] [PLUGIN] load -> OK
+[02:10:36.606] [PLUGIN] load -> OK
+[02:10:36.698] [INFO] [PLUGIN] Loading plugin: com.zamaudio.ZamDynamicEQ from /usr/lib/clap/ZamDynamicEQ.clap
+[02:10:36.698] [DEBUG] [BRIDGE] nativePluginLoad(0;/usr/lib/clap/ZamDynamicEQ.clap;com.zamaudio.ZamDynamicEQ)
+[02:10:36.698] [DEBUG] [BRIDGE] nativePluginList(0)
+[02:10:36.698] [DEBUG] [BRIDGE] nativePluginLoad resolved: true
+[02:10:36.698] [DEBUG] [BRIDGE] nativePluginList resolved: [{\"name\":\"com.zamaudio.ZamDynamicEQ\";\"bypassed\":false}]
+[02:10:38.501] [PLUGIN] scanClap done
+[02:10:38.707] [DEBUG] [BRIDGE] nativeScanClap(./plugins)
+[02:10:38.707] [DEBUG] [BRIDGE] nativeScanClap resolved: [{\"path\":\"/usr/lib/clap/ZaMaximX2.clap\";\"id\":\"com.zamaudio.ZaMaximX2\";\"name\":\"ZaMaximX2\"};{\"path\":\"/usr/lib/clap/ZamDyna
+[02:11:14.23] [PLUGIN] remove track=0 plugin=0
+[02:11:14.854] [DEBUG] [BRIDGE] nativePluginRemove(0;0)
+[02:11:14.854] [DEBUG] [BRIDGE] nativePluginList(0)
+[02:11:14.854] [DEBUG] [BRIDGE] nativePluginRemove resolved: null
+[02:11:14.854] [DEBUG] [BRIDGE] nativePluginList resolved: []
+[02:11:17.694] [MIX] setSolo track=0 val=true
+[02:11:17.867] [DEBUG] [BRIDGE] nativeSetSolo(0;1)
+[02:11:17.867] [INFO] [TRACK] Solo track 0 -> 1
+[02:11:17.867] [DEBUG] [BRIDGE] nativeSetSolo resolved: null
+[02:11:18.138] [MIX] setMute track=0 val=true
+[02:11:18.870] [INFO] [TRACK] Mute track 0 -> 1
+[02:11:18.870] [DEBUG] [BRIDGE] nativeSetMute(0;1)
+[02:11:18.870] [DEBUG] [BRIDGE] nativeSetMute resolved: null

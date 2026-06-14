@@ -511,11 +511,6 @@ function doMute(i) {
   log('INFO', 'TRACK', 'Mute track ' + i + ' -> ' + (STATE.mutes[i] ? '1' : '0'));
   cn('nativeSetMute', i + ',' + (STATE.mutes[i] ? '1' : '0'));
 }
-function doMute(i) {
-  STATE.mutes[i] = !STATE.mutes[i];
-  log('INFO', 'TRACK', 'Mute track ' + i + ' -> ' + (STATE.mutes[i] ? '1' : '0'));
-  cn('nativeSetMute', i + ',' + (STATE.mutes[i] ? '1' : '0'));
-}
 var _savedMutes = null;
 function doSolo(i) {
   if (STATE.solos[i]) {
@@ -1094,7 +1089,7 @@ function renderPluginListDiv(q) {
   var count = 0;
   for (var i = 0; i < STATE.pluginsCache.length; i++) {
     var pl = STATE.pluginsCache[i];
-    var name = pl.name || pl.id || pl.path.split('/').pop();
+    var name = typeof pl === 'string' ? pl.split('/').pop().replace('.clap','') : (pl.name || pl.id || 'Unknown');
     if (q && name.toLowerCase().indexOf(q) === -1) continue;
     html += '<div class="pitem" onclick="loadPlugin(' + i + ')">' + escHtml(name) + '</div>';
     count++;
@@ -1127,9 +1122,17 @@ function scanPlugins() {
 function loadPlugin(i) {
   var pl = STATE.pluginsCache[i];
   if (!pl) return;
-  var path = pl.path;
-  var id = pl.id || path.split('/').pop().replace('.clap', '');
-  log('INFO', 'PLUGIN', 'Loading plugin: ' + id + ' from ' + path);
+  var path, id, name;
+  if (typeof pl === 'string') {
+    path = pl;
+    name = pl.split('/').pop().replace('.clap','');
+    id = name;
+  } else {
+    path = pl.path;
+    id = pl.id;
+    name = pl.name || id;
+  }
+  log('INFO', 'PLUGIN', 'Loading plugin: ' + name + ' from ' + path);
   cn('nativePluginLoad', STATE.sel + ',' + path + ',' + id);
   closePopup();
   renderPluginList();
