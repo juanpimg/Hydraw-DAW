@@ -521,6 +521,22 @@ static std::string nativeGetPeakCache(const std::string& req) {
 
 static std::string nativeListDir(const std::string& req) {
     std::string a = unwrapArg(req);
+    // Diagnostic: echo the path C++ actually receives
+    {
+        std::string js = "log('DEBUG','DIR','C++ raw req: " + escapeJson(req) + "')";
+        if (g_wv) g_wv->eval(js);
+    }
+    {
+        std::string js = "log('DEBUG','DIR','C++ unwrapped path: " + escapeJson(a) + "')";
+        if (g_wv) g_wv->eval(js);
+    }
+    // Check if directory exists
+    {
+        std::error_code ec2;
+        bool exists = std::filesystem::exists(a, ec2);
+        std::string js = "log('DEBUG','DIR','exists=" + std::to_string(exists) + " ec=" + std::to_string(ec2.value()) + "')";
+        if (g_wv) g_wv->eval(js);
+    }
     std::ostringstream js;
     js << "[";
     bool first = true;
@@ -530,7 +546,6 @@ static std::string nativeListDir(const std::string& req) {
         auto it = std::filesystem::directory_iterator(a, ec);
         if (ec) {
             log("DIR", "listDir error for '" + a + "': " + ec.message());
-            // Relay error to JS console
             std::string errjs = "log('ERROR','DIR','listDir: " + escapeJson(ec.message()) + " for " + escapeJson(a) + "')";
             if (g_wv) g_wv->eval(errjs);
             js << "]";
