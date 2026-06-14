@@ -12,6 +12,7 @@
   <img src="https://img.shields.io/badge/PLATFORM-Linux-important?style=flat-square" alt="Platform: Linux"/>
   <img src="https://img.shields.io/badge/LANG-C%2B%2B17-00599C?style=flat-square" alt="C++17"/>
   <img src="https://img.shields.io/badge/LICENSE-MIT-yellow?style=flat-square" alt="MIT License"/>
+  <img src="https://img.shields.io/badge/version-v0.1.0-blue?style=flat-square" alt="Version 0.1.0"/>
 </p>
 
 ---

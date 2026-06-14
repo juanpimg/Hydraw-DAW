@@ -945,7 +945,7 @@ int main() {
     signal(SIGSEGV, crashHandler);
     initLogger();
     setenv("GDK_BACKEND", "x11", 0); // Force X11 for CLAP plugin GUI embedding
-    log("SYS", "=== Hydraw DAW starting ===");
+    log("SYS", "=== Hydraw DAW v" HYDRAW_VERSION " starting ===");
 
     AudioEngine audioEngine;
     if (!audioEngine.init()) {
