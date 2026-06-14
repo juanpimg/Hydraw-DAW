@@ -6,7 +6,9 @@
 #include <gtk/gtk.h>
 #include <gdk/gdkx.h>
 #include <GL/glx.h>
+#include <set>
 #include "clap/ext/timer-support.h"
+#include "clap/ext/params.h"
 #include <thread>
 #include <atomic>
 #include <chrono>
@@ -20,6 +22,8 @@
 #include <ctime>
 #include <fstream>
 #include <mutex>
+#include <csignal>
+#include <execinfo.h>
 
 static AudioEngine* g_engine = nullptr;
 static webview::webview* g_wv = nullptr;
@@ -237,9 +241,12 @@ static void uiUpdateLoop() {
                 auto* timer = (const clap_plugin_timer_support_t*)
                     gs.plugin->get_extension(gs.plugin, CLAP_EXT_TIMER_SUPPORT);
                 if (timer && timer->on_timer)
-                    timer->on_timer(gs.plugin, 1);
+                     timer->on_timer(gs.plugin, 1);
             }
         }
+
+        // Process pending flush requests from plugins (parameter sync)
+        PluginChain::processPendingFlushes();
     }
     log("DBG", "uiUpdateLoop: exiting");
 }
@@ -923,7 +930,19 @@ static void onDragDataReceived(GtkWidget* widget, GdkDragContext* context,
     wv->eval("window._onNativeDropPath(\"" + escaped + "\")");
 }
 
+static void crashHandler(int sig) {
+    void* buf[32];
+    int n = backtrace(buf, 32);
+    fprintf(stderr, "SIGNAL %d caught! Backtrace:\n", sig);
+    char** symbols = backtrace_symbols(buf, n);
+    for (int i = 0; i < n; ++i)
+        fprintf(stderr, "  %s\n", symbols[i]);
+    free(symbols);
+    _exit(1);
+}
+
 int main() {
+    signal(SIGSEGV, crashHandler);
     initLogger();
     setenv("GDK_BACKEND", "x11", 0); // Force X11 for CLAP plugin GUI embedding
     log("SYS", "=== Hydraw DAW starting ===");

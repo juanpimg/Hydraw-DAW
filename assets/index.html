@@ -205,6 +205,9 @@ html,body{
 }
 #popup .pitem{font-size:12px;padding:6px 10px;cursor:pointer;border-radius:5px;color:#b0b0c0}
 #popup .pitem:hover{background:#262632;color:#e0e0e8}
+#popup input{width:100%;box-sizing:border-box;padding:5px 8px;border-radius:6px;border:1px solid #363642;background:#141418;color:#e4e4e8;font-size:12px;outline:none;margin-bottom:8px}
+#popup input:focus{border-color:#5599ff}
+#popup .pnone{color:#444;font-size:10px;text-align:center;padding:12px}
 </style>
 </head>
 <body>
@@ -287,11 +290,9 @@ function log(level, label, msg) {
   var fn = lv >= LOG_LEVELS.ERROR ? console.error :
            lv >= LOG_LEVELS.WARN  ? console.warn  : console.log;
   fn('[' + ts + '] [' + level + '] [' + label + '] ' + msg);
-  // Relay WARN+ to C++ log file (batched to avoid spamming)
-  if (lv >= LOG_LEVELS.WARN) {
-    LOG_BATCH.push(level + ',' + label + ',' + msg.replace(/,/g,';'));
-    if (LOG_BATCH.length >= 10) flushLogBatch();
-  }
+  // Relay ALL log levels (not just WARN+) to C++ log file via nativeLog
+  LOG_BATCH.push(level + ',' + label + ',' + msg.replace(/,/g,';'));
+  if (LOG_BATCH.length >= 10) flushLogBatch();
 }
 function flushLogBatch() {
   if (LOG_BATCH.length === 0) return;
@@ -300,6 +301,15 @@ function flushLogBatch() {
   if (fn) { try { fn(batch.join('|')); } catch(e) {} }
 }
 setInterval(flushLogBatch, LOG_FLUSH_MS);
+
+// Capture unhandled errors (SyntaxError, ReferenceError, etc.) to C++ log
+window.addEventListener('error', function(e) {
+  log('ERROR', 'UNHANDLED', (e.error ? e.error.message : e.message) || String(e));
+});
+window.addEventListener('unhandledrejection', function(e) {
+  log('ERROR', 'UNHANDLED', 'Promise: ' + (e.reason ? e.reason.message || String(e.reason) : String(e)));
+});
+
 function showError(msg) {
   log('ERROR', 'UI', msg);
   var el = document.getElementById('browser-error');
@@ -1073,22 +1083,41 @@ function renderPluginList() {
   }
 }
 
+function renderPluginPopup(filter) {
+  var html = '<div style="font-size:12px;color:#667;margin-bottom:6px">CLAP Plugins</div>';
+  html += '<input id="popup-search" type="text" placeholder="Search plugins..." value="' + escHtml(filter) + '" oninput="filterPlugins()" autofocus>';
+  if (STATE.pluginsCache.length === 0) {
+    html += '<div class="pnone">None found</div>';
+  } else {
+    var q = filter.toLowerCase();
+    var count = 0;
+    for (var i = 0; i < STATE.pluginsCache.length; i++) {
+      var pl = STATE.pluginsCache[i];
+      var name = pl.name || pl.id || pl.path.split('/').pop();
+      if (q && name.toLowerCase().indexOf(q) === -1) continue;
+      html += '<div class="pitem" onclick="loadPlugin(' + i + ')">' + escHtml(name) + '</div>';
+      count++;
+    }
+    if (count === 0) html += '<div class="pnone">No plugins match "' + escHtml(filter) + '"</div>';
+  }
+  showPopup(html);
+  var inp = document.getElementById('popup-search');
+  if (inp) inp.focus();
+}
+
+function filterPlugins() {
+  var inp = document.getElementById('popup-search');
+  if (!inp) return;
+  renderPluginPopup(inp.value);
+}
+
 function scanPlugins() {
   var p = cn('nativeScanClap', './plugins');
   if (p && typeof p.then === 'function') {
     p.then(function(data) {
       STATE.pluginsCache = [];
       if (data && Array.isArray(data)) STATE.pluginsCache = data;
-      var html = '<div style="font-size:12px;color:#667;margin-bottom:8px">CLAP Plugins</div>';
-      if (STATE.pluginsCache.length === 0) {
-        html += '<div style="color:#444;font-size:10px">None found</div>';
-      } else {
-        for (var i = 0; i < STATE.pluginsCache.length; i++) {
-          var pl = STATE.pluginsCache[i];
-          html += '<div class="pitem" onclick="loadPlugin(' + i + ')">' + escHtml(pl.name || pl.id || pl.path.split('/').pop()) + '</div>';
-        }
-      }
-      showPopup(html);
+      renderPluginPopup('');
     });
   } else {
     showPopup('<div style="font-size:12px;color:#667;margin-bottom:8px">CLAP Plugins</div><div style="color:#444;font-size:10px">Bridge not ready</div>');

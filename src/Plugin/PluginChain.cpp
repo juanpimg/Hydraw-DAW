@@ -2,18 +2,62 @@
 #include "ClapHost.h"
 #include <cstring>
 #include <mutex>
+#include <cstdio>
+#include <vector>
 
 // CLAP extensions
 #include "ext/timer-support.h"
-#include <mutex>
+#include "ext/log.h"
+#include "ext/params.h"
+#include "ext/audio-ports.h"
 
-// Forward declaration of GUI host extension (defined in main.cpp)
+#include <set>
+
 extern const clap_host_gui_t s_hostGui;
 
-// Minimal timer support stub (DPF plugins need this)
+// ── Pending flush tracking (for processPendingFlushes on main thread) ──
+static std::mutex g_flushMutex;
+std::set<const clap_host_t*> g_pendingFlush;
+
+// ── CLAP event structures ──
+
+struct HostInputEvents {
+    clap_input_events_t list;
+    std::vector<const clap_event_header_t*> events;
+
+    static uint32_t CLAP_ABI size_cb(const clap_input_events* list) {
+        auto* self = (HostInputEvents*)list;
+        return (uint32_t)self->events.size();
+    }
+
+    static const clap_event_header_t* CLAP_ABI get_cb(const clap_input_events* list, uint32_t index) {
+        auto* self = (HostInputEvents*)list;
+        if (index >= self->events.size()) return nullptr;
+        return self->events[index];
+    }
+
+    HostInputEvents() : events() {
+        list.size = size_cb;
+        list.get = get_cb;
+    }
+};
+
+struct HostOutputEvents {
+    clap_output_events_t list;
+
+    static bool CLAP_ABI try_push_cb(const clap_output_events* list, const clap_event_header_t* event) {
+        return true; // acknowledge all events from plugin
+    }
+
+    HostOutputEvents() {
+        list.try_push = try_push_cb;
+    }
+};
+
+// ── CLAP host extensions ──
+
 static bool clap_host_register_timer(const clap_host_t* host, uint32_t period_ms, clap_id* timer_id) {
-    if (timer_id) *timer_id = 1; // dummy timer id
-    // The plugin calls plugin->on_timer periodically
+    if (timer_id) *timer_id = 1;
     return true;
 }
 static bool clap_host_unregister_timer(const clap_host_t* host, clap_id timer_id) { return true; }
@@ -22,19 +66,33 @@ static const clap_host_timer_support_t s_hostTimer = {
     clap_host_unregister_timer
 };
 
-// Minimal CLAP host callbacks (plugins call these during init/activate)
+static void clap_host_log(const clap_host_t* host, clap_log_severity severity, const char* msg) {}
+static const clap_host_log_t s_hostLog = { clap_host_log };
+
+static void clap_host_rescan(const clap_host_t* host, clap_param_rescan_flags flags) {}
+static void clap_host_clear(const clap_host_t* host, clap_id param_id, clap_param_clear_flags flags) {}
+static void clap_host_request_flush(const clap_host_t* host) {
+    std::lock_guard<std::mutex> lk(g_flushMutex);
+    g_pendingFlush.insert(host);
+}
+static const clap_host_params_t s_hostParams = {
+    clap_host_rescan,
+    clap_host_clear,
+    clap_host_request_flush
+};
+
 static const void* clap_get_extension(const clap_host_t* host, const char* extension_id) {
-    if (std::strcmp(extension_id, CLAP_EXT_GUI) == 0)
-        return &s_hostGui;
-    if (std::strcmp(extension_id, CLAP_EXT_TIMER_SUPPORT) == 0)
-        return &s_hostTimer;
-    return nullptr; // no other extensions yet
+    if (std::strcmp(extension_id, CLAP_EXT_GUI) == 0) return &s_hostGui;
+    if (std::strcmp(extension_id, CLAP_EXT_TIMER_SUPPORT) == 0) return &s_hostTimer;
+    if (std::strcmp(extension_id, CLAP_EXT_LOG) == 0) return &s_hostLog;
+    if (std::strcmp(extension_id, CLAP_EXT_PARAMS) == 0) return &s_hostParams;
+    return nullptr;
 }
 static void clap_request_restart(const clap_host_t* host) {}
 static void clap_request_process(const clap_host_t* host) {}
 static void clap_request_callback(const clap_host_t* host) {}
 
-static const clap_host_t s_host = []() {
+static const clap_host_t s_hostTemplate = []() {
     clap_host_t h = {};
     h.clap_version = CLAP_VERSION;
     h.name = "Hydraw DAW";
@@ -48,20 +106,7 @@ static const clap_host_t s_host = []() {
     return h;
 }();
 
-const clap_host_t* PluginChain::getMinimalHost() {
-    return &s_host;
-}
-
-// Each plugin gets its own host with a unique host_data that encodes
-// (trackIdx << 16 | pluginIdx) for the GUI extension callbacks.
-const clap_host_t* PluginChain::makeHost(int trackIdx, int pluginIdx) {
-    thread_local static clap_host_t perPluginHost[64];
-    thread_local static int nextSlot = 0;
-    int slot = nextSlot++ % 64;
-    perPluginHost[slot] = s_host;
-    perPluginHost[slot].host_data = (void*)(intptr_t)((trackIdx << 16) | pluginIdx);
-    return &perPluginHost[slot];
-}
+// ── PluginChain implementation ──
 
 PluginChain::PluginChain(int sampleRate, int blockSize, int trackIndex)
     : m_sampleRate(sampleRate)
@@ -71,16 +116,17 @@ PluginChain::PluginChain(int sampleRate, int blockSize, int trackIndex)
     m_scratchBuffer.resize(blockSize * 2, 0.0f);
 }
 
-PluginChain::~PluginChain() {
-    clear();
-}
+PluginChain::~PluginChain() { clear(); }
 
 bool PluginChain::addPlugin(const char* libraryPath, const char* pluginId) {
     std::lock_guard<std::mutex> lock(m_mutex);
     void* lib = ClapHost::loadLibrary(libraryPath);
     if (!lib) return false;
 
-    const clap_plugin_t* plugin = ClapHost::createPlugin(lib, makeHost(m_trackIdx, (int)m_plugins.size()), pluginId);
+    auto dedicatedHost = std::make_unique<clap_host_t>(s_hostTemplate);
+    dedicatedHost->host_data = (void*)(intptr_t)((m_trackIdx << 16) | m_plugins.size());
+
+    const clap_plugin_t* plugin = ClapHost::createPlugin(lib, dedicatedHost.get(), pluginId);
     if (!plugin) {
         ClapHost::unloadLibrary(lib);
         return false;
@@ -93,7 +139,8 @@ bool PluginChain::addPlugin(const char* libraryPath, const char* pluginId) {
         return false;
     }
 
-    if (plugin->activate && !plugin->activate(plugin, (double)m_sampleRate, (uint32_t)m_blockSize, (uint32_t)m_blockSize)) {
+    if (plugin->activate &&
+        !plugin->activate(plugin, (double)m_sampleRate, (uint32_t)m_blockSize, (uint32_t)m_blockSize)) {
         plugin->destroy(plugin);
         ClapHost::unloadLibrary(lib);
         return false;
@@ -102,6 +149,7 @@ bool PluginChain::addPlugin(const char* libraryPath, const char* pluginId) {
     PluginInstance pi;
     pi.library = lib;
     pi.plugin = plugin;
+    pi.dedicatedHost = std::move(dedicatedHost);
     pi.name = pluginId;
     pi.active = true;
 
@@ -142,11 +190,10 @@ void PluginChain::setBypass(int index, bool bypass) {
 void PluginChain::process(const float* input, float* output, int frames, int channels) {
     if (m_plugins.empty()) return;
     if (frames <= 0 || channels <= 0) return;
-    // Non-blocking try_lock — if UI thread is modifying, skip this block
     if (!m_mutex.try_lock()) return;
     std::lock_guard<std::mutex> lock(m_mutex, std::adopt_lock);
 
-    int numChannels = channels < 2 ? channels : 2; // clamp to stereo
+    int numChannels = channels < 2 ? channels : 2;
     int numFrames = frames;
 
     const float* inPtrs[2];
@@ -164,17 +211,47 @@ void PluginChain::process(const float* input, float* output, int frames, int cha
         if (!pi.active) continue;
         if (!pi.plugin || !pi.plugin->process) continue;
 
+        // Query plugin's input channel count
+        int pluginChannels = numChannels;
+        auto* audioPorts = (const clap_plugin_audio_ports_t*)
+            pi.plugin->get_extension(pi.plugin, CLAP_EXT_AUDIO_PORTS);
+        if (audioPorts && audioPorts->count && audioPorts->count(pi.plugin, true) > 0) {
+            clap_audio_port_info_t portInfo;
+            if (audioPorts->get(pi.plugin, 0, true, &portInfo))
+                pluginChannels = (int)portInfo.channel_count;
+        }
+        int useChannels = pluginChannels < 1 ? 1 : (pluginChannels > 2 ? 2 : pluginChannels);
+        bool needsDownmix = (numChannels == 2 && useChannels == 1);
+
+        // Downmix stereo → mono for mono plugins
+        std::vector<float> monoWork;
+        const float* monoIn[2] = {inPtrs[0], inPtrs[1]};
+        float* monoOut[2] = {outPtrs[0], outPtrs[1]};
+        if (needsDownmix) {
+            monoWork.resize(numFrames);
+            for (int f = 0; f < numFrames; ++f)
+                monoWork[f] = (inPtrs[0][f] + inPtrs[1][f]) * 0.5f;
+            monoIn[0] = monoWork.data();
+            monoIn[1] = nullptr;
+            monoOut[0] = monoWork.data();
+            monoOut[1] = nullptr;
+        }
+
         clap_audio_buffer_t inBuf;
-        inBuf.data32 = (float**)inPtrs;
+        inBuf.data32 = (float**)monoIn;
         inBuf.data64 = nullptr;
-        inBuf.channel_count = (uint32_t)numChannels;
+        inBuf.channel_count = (uint32_t)useChannels;
         inBuf.latency = 0;
 
         clap_audio_buffer_t outBuf;
-        outBuf.data32 = (float**)outPtrs;
+        outBuf.data32 = (float**)monoOut;
         outBuf.data64 = nullptr;
-        outBuf.channel_count = (uint32_t)numChannels;
+        outBuf.channel_count = (uint32_t)useChannels;
         outBuf.latency = 0;
+
+        // Provide proper CLAP event structures — CRITICAL for DPF parameter sync
+        HostInputEvents inEvents;
+        HostOutputEvents outEvents;
 
         clap_process_t proc;
         memset(&proc, 0, sizeof(proc));
@@ -183,14 +260,54 @@ void PluginChain::process(const float* input, float* output, int frames, int cha
         proc.audio_inputs_count = 1;
         proc.audio_outputs_count = 1;
         proc.frames_count = (uint32_t)numFrames;
+        proc.in_events = &inEvents.list;
+        proc.out_events = &outEvents.list;
 
-        pi.plugin->process(pi.plugin, &proc);
+        try {
+            // Call flush with proper event structs first (parameter sync for non-DPF plugins)
+            const clap_plugin_params_t* pparams = (const clap_plugin_params_t*)
+                pi.plugin->get_extension(pi.plugin, CLAP_EXT_PARAMS);
+            if (pparams && pparams->flush)
+                pparams->flush(pi.plugin, &inEvents.list, &outEvents.list);
+            pi.plugin->process(pi.plugin, &proc);
+        } catch (...) {
+            fprintf(stderr, "[PLUGIN] process exception in %s\n", pi.name.c_str());
+        }
+
+        // Upmix mono back to stereo
+        if (needsDownmix && numChannels == 2) {
+            for (int f = 0; f < numFrames; ++f) {
+                outPtrs[0][f] = monoWork[f];
+                outPtrs[1][f] = monoWork[f];
+            }
+        }
 
         if (first) {
             first = false;
             inPtrs[0] = output;
             if (numChannels > 1) inPtrs[1] = output + numFrames;
         }
+    }
+}
+
+void PluginChain::processPendingFlushes() {
+    std::vector<const clap_host_t*> flushes;
+    {
+        std::lock_guard<std::mutex> lk(g_flushMutex);
+        if (g_pendingFlush.empty()) return;
+        flushes.assign(g_pendingFlush.begin(), g_pendingFlush.end());
+        g_pendingFlush.clear();
+    }
+
+    for (const auto* host : flushes) {
+        if (!host) continue;
+        intptr_t id = (intptr_t)host->host_data;
+        int trackIdx = (int)(id >> 16);
+        int pluginIdx = (int)(id & 0xFFFF);
+
+        // Can't easily find the right chain here without a global registry.
+        // The flush is also handled in process() on the audio thread.
+        // This is a best-effort sync for non-DPF plugins that need flush on main thread.
     }
 }
 

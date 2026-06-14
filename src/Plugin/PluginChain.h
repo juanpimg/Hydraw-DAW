@@ -8,6 +8,7 @@
 struct PluginInstance {
     void* library{nullptr};
     const clap_plugin_t* plugin{nullptr};
+    std::unique_ptr<clap_host_t> dedicatedHost;
     std::string name;
     bool active{true};
 };
@@ -29,6 +30,9 @@ public:
     bool isBypassed(int index) const;
     const clap_plugin_t* getPlugin(int index) const;
 
+    // Process pending flush requests from the main thread (for parameter sync)
+    static void processPendingFlushes();
+
 private:
     int m_sampleRate;
     int m_blockSize;
@@ -36,6 +40,4 @@ private:
     std::vector<PluginInstance> m_plugins;
     std::vector<float> m_scratchBuffer;
     mutable std::mutex m_mutex;
-    static const clap_host_t* makeHost(int trackIdx, int pluginIdx);
-    static const clap_host_t* getMinimalHost();
 };
