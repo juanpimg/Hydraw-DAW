@@ -259,32 +259,31 @@ void AudioEngine::audioCallback(ma_device* pDevice, void* pOutput, const void* p
         if (playing) {
             AudioBuffer* buf = track.audio.load(std::memory_order_acquire);
             uint64_t cs = track.clipStart.load(std::memory_order_relaxed);
-            if (buf) {
-                for (ma_uint32 f = 0; f < frameCount; ++f) {
-                    uint64_t pos = basePlayhead + f;
-                    if (pos >= cs) {
-                        uint64_t offset = pos - cs;
-                        if (offset < buf->frames) {
-                            blockL[f] = buf->dataL[offset];
-                            blockR[f] = buf->dataR[offset];
-                            if (buf->dataL[offset] != 0.0f || buf->dataR[offset] != 0.0f)
-                                hasAudio = true;
-                        } else {
-                            blockL[f] = 0.0f;
-                            blockR[f] = 0.0f;
-                        }
-                    } else {
-                        blockL[f] = 0.0f;
-                        blockR[f] = 0.0f;
+            if (buf && basePlayhead >= cs) {
+                uint64_t offset = basePlayhead - cs;
+                if (offset < buf->frames) {
+                    ma_uint64 copyFrames = frameCount;
+                    if (offset + copyFrames > buf->frames)
+                        copyFrames = buf->frames - offset;
+                    // Bulk memcpy avoids per-sample loop overhead
+                    std::memcpy(blockL, &buf->dataL[offset], copyFrames * sizeof(float));
+                    std::memcpy(blockR, &buf->dataR[offset], copyFrames * sizeof(float));
+                    hasAudio = true;
+                    if (copyFrames < frameCount) {
+                        std::memset(blockL + copyFrames, 0, (frameCount - copyFrames) * sizeof(float));
+                        std::memset(blockR + copyFrames, 0, (frameCount - copyFrames) * sizeof(float));
                     }
+                } else {
+                    std::memset(blockL, 0, sizeof(blockL));
+                    std::memset(blockR, 0, sizeof(blockR));
                 }
             } else {
-                memset(blockL, 0, sizeof(blockL));
-                memset(blockR, 0, sizeof(blockR));
+                std::memset(blockL, 0, sizeof(blockL));
+                std::memset(blockR, 0, sizeof(blockR));
             }
         } else {
-            memset(blockL, 0, sizeof(blockL));
-            memset(blockR, 0, sizeof(blockR));
+            std::memset(blockL, 0, sizeof(blockL));
+            std::memset(blockR, 0, sizeof(blockR));
         }
 
         // Add armed input

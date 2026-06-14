@@ -149,7 +149,7 @@ html,body{
 .ch .mc{width:14px;background:#14141c;border-radius:3px;position:relative;overflow:hidden;flex-shrink:0}
 .ch .mc .mf{
   position:absolute;bottom:0;left:0;width:100%;border-radius:3px;
-  transition:height 0.05s;
+  transition:transform 0.04s;transform-origin:bottom;
   background:linear-gradient(to top,#30c860 0%,#e0b020 60%,#e03030 85%);
 }
 .ch .fw{flex:1;display:flex;align-items:stretch;justify-content:center;min-height:0}
@@ -182,7 +182,7 @@ html,body{
 .master-strip{flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;width:100%;min-height:50px}
 .master-mc{width:14px;flex:1;background:#14141c;border-radius:3px;position:relative;overflow:hidden}
 .master-mf{position:absolute;bottom:0;left:0;width:100%;border-radius:3px;
-  transition:height 0.05s;
+  transition:transform 0.04s;transform-origin:bottom;
   background:linear-gradient(to top,#30c860 0%,#e0b020 60%,#e03030 85%);
 }
 .master-fw{flex:1;display:flex;align-items:stretch;justify-content:center;min-height:0;width:100%}
@@ -353,32 +353,34 @@ function cn(name, arg) {
 }
 
 // ── NATIVE UPDATE LOOP ──
-function updateUIFromNative(d) {
+function updateUIFromNative(a) {
   if (Date.now() - lastUpdate < 25) return;
   lastUpdate = Date.now();
 
-  if (!d || typeof d !== 'object') {
+  if (!a || !Array.isArray(a)) {
     log('WARN', 'LOOP', 'Received invalid data from native');
     return;
   }
 
-  STATE.playing = !!d.playing;
-  STATE.playhead = d.playhead || 0;
-  STATE.trackCount = d.trackCount || 1;
-  STATE.peaks = d.trackPeaks || [];
-  STATE.masterPeakL = d.masterPeakL || 0;
-  STATE.masterPeakR = d.masterPeakR || 0;
-  STATE.volumes = d.volumes || [];
-  STATE.mutes = d.mutes || [];
-  STATE.solos = d.solos || [];
-  STATE.arms = d.arms || [];
-  STATE.names = d.trackNames || [];
-  STATE.audioFrames = d.audioFrames || [];
-  STATE.clipStarts = d.clipStarts || [];
-  // peakCaches NOT from telemetry (too large; fetched separately via nativeGetPeakCache)
+  // Compact array format: [playing,playhead,trackCount,masterPeakL,masterPeakR,
+  //  masterVolume,trackPeaks[],volumes[],mutes[],solos[],arms[],
+  //  trackNames[],audioFrames[],clipStarts[]]
+  STATE.playing = !!a[0];
+  STATE.playhead = a[1] || 0;
+  STATE.trackCount = a[2] || 1;
+  STATE.masterPeakL = a[3] || 0;
+  STATE.masterPeakR = a[4] || 0;
+  STATE.masterVolume = a[5] !== undefined ? a[5] : 1;
+  STATE.peaks = a[6] || [];
+  STATE.volumes = a[7] || [];
+  STATE.mutes = a[8] || [];
+  STATE.solos = a[9] || [];
+  STATE.arms = a[10] || [];
+  STATE.names = a[11] || [];
+  STATE.audioFrames = a[12] || [];
+  STATE.clipStarts = a[13] || [];
 
   refreshPeaks();
-  STATE.masterVolume = d.masterVolume !== undefined ? d.masterVolume : 1;
 
   if (STATE.sel >= STATE.trackCount)
     STATE.sel = Math.max(0, STATE.trackCount - 1);
@@ -990,20 +992,32 @@ function renderMixerChannels() {
   log('DEBUG', 'UI', 'renderMixerChannels: ' + STATE.trackCount + ' channels');
 }
 
-function updateMixer() {
-  for (var i = 0; i < STATE.trackCount; i++) {
-    var mf = document.getElementById('mf-' + i);
-    if (mf) mf.style.height = Math.min(((STATE.peaks[i] || 0) / 1.5) * 100, 100).toFixed(1) + '%';
-    var db = document.getElementById('db-' + i);
-    if (db) {
-      var v = STATE.volumes[i] || 1;
-      var dB = v > 0.0001 ? 20 * Math.log10(v) : -Infinity;
-      db.textContent = !isFinite(dB) ? '-inf dB' : (dB >= 0 ? '+' : '') + dB.toFixed(1) + ' dB';
+// ── VU meter RAF loop ──
+var _rafPending = false;
+function scheduleMeterUpdate() {
+  if (_rafPending) return;
+  _rafPending = true;
+  requestAnimationFrame(function() {
+    _rafPending = false;
+    var tc = STATE.trackCount;
+    for (var i = 0; i < tc; i++) {
+      var mf = document.getElementById('mf-' + i);
+      if (mf) {
+        var pct = Math.min(((STATE.peaks[i] || 0) / 1.5), 1.0);
+        mf.style.transform = 'scaleY(' + pct.toFixed(3) + ')';
+      }
+      var db = document.getElementById('db-' + i);
+      if (db) {
+        var v = STATE.volumes[i] || 1;
+        var dB = v > 0.0001 ? 20 * Math.log10(v) : -Infinity;
+        db.textContent = !isFinite(dB) ? '-inf dB' : (dB >= 0 ? '+' : '') + dB.toFixed(1) + ' dB';
+      }
+      var fd = document.getElementById('fd-' + i);
+      if (fd && document.activeElement !== fd) fd.value = STATE.volumes[i] || 1;
     }
-    var fd = document.getElementById('fd-' + i);
-    if (fd && document.activeElement !== fd) fd.value = STATE.volumes[i] || 1;
-  }
+  });
 }
+function updateMixer() { scheduleMeterUpdate(); }
 
 function onMixFader(i, v) {
   log('DEBUG', 'MIX', 'Fader ' + i + ' = ' + v);
@@ -1016,7 +1030,8 @@ function updateMaster() {
   var mf = document.getElementById('master-vu');
   if (mf) {
     var peak = Math.max(STATE.masterPeakL || 0, STATE.masterPeakR || 0);
-    mf.style.height = Math.min((peak / 1.5) * 100, 100).toFixed(1) + '%';
+    var pct = Math.min(peak / 1.5, 1.0);
+    mf.style.transform = 'scaleY(' + pct.toFixed(3) + ')';
   }
   var fd = document.getElementById('master-fd');
   if (fd && document.activeElement !== fd) fd.value = STATE.masterVolume !== undefined ? STATE.masterVolume : 1;

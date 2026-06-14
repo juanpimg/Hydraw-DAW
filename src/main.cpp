@@ -169,68 +169,65 @@ static void uiUpdateLoop() {
         int tc = g_engine->getTrackCount();
         bool playing = g_engine->isPlaying();
 
-        std::ostringstream js;
         auto* master = g_engine->getMaster();
-        js << "updateUIFromNative({"
-           << "playing:" << (playing ? "true" : "false") << ","
-           << "playhead:" << ph << ","
-           << "trackCount:" << tc << ","
-           << "masterPeakL:" << (master ? master->peakL.load(std::memory_order_relaxed) : 0.0f) << ","
-           << "masterPeakR:" << (master ? master->peakR.load(std::memory_order_relaxed) : 0.0f) << ","
-           << "masterVolume:" << (master ? master->volume.load(std::memory_order_relaxed) : 1.0f) << ","
-           << "trackPeaks:[";
+        std::ostringstream js;
+        // Compact array format: no property name strings, ~60% smaller than object
+        js << "updateUIFromNative(["
+           << (playing ? "1" : "0") << "," << ph << "," << tc << ","
+           << (master ? master->peakL.load(std::memory_order_relaxed) : 0.0f) << ","
+           << (master ? master->peakR.load(std::memory_order_relaxed) : 0.0f) << ","
+           << (master ? master->volume.load(std::memory_order_relaxed) : 1.0f);
+        // Track peaks
+        js << ",[";
         for (int i = 0; i < tc; ++i) {
             if (i > 0) js << ",";
-            float peak = std::max(
-                g_engine->getTrack(i)->peakL.load(std::memory_order_relaxed),
-                g_engine->getTrack(i)->peakR.load(std::memory_order_relaxed));
-            js << peak;
+            js << std::max(g_engine->getTrack(i)->peakL.load(std::memory_order_relaxed),
+                           g_engine->getTrack(i)->peakR.load(std::memory_order_relaxed));
         }
-        js << "],";
-        js << "volumes:[";
+        // Volumes
+        js << "],[";
         for (int i = 0; i < tc; ++i) {
             if (i > 0) js << ",";
             js << g_engine->getTrack(i)->volume.load(std::memory_order_relaxed);
         }
-        js << "],";
-        js << "mutes:[";
+        // Mutes
+        js << "],[";
         for (int i = 0; i < tc; ++i) {
             if (i > 0) js << ",";
-            js << (g_engine->getTrack(i)->muted.load(std::memory_order_relaxed) ? "true" : "false");
+            js << (g_engine->getTrack(i)->muted.load(std::memory_order_relaxed) ? "1" : "0");
         }
-        js << "],";
-        js << "solos:[";
+        // Solos
+        js << "],[";
         for (int i = 0; i < tc; ++i) {
             if (i > 0) js << ",";
-            js << (g_engine->getTrack(i)->soloed.load(std::memory_order_relaxed) ? "true" : "false");
+            js << (g_engine->getTrack(i)->soloed.load(std::memory_order_relaxed) ? "1" : "0");
         }
-        js << "],";
-        js << "arms:[";
+        // Arms
+        js << "],[";
         for (int i = 0; i < tc; ++i) {
             if (i > 0) js << ",";
-            js << (g_engine->getTrack(i)->armed.load(std::memory_order_relaxed) ? "true" : "false");
+            js << (g_engine->getTrack(i)->armed.load(std::memory_order_relaxed) ? "1" : "0");
         }
-        js << "],";
-        js << "trackNames:[";
+        // Track names
+        js << "],[";
         for (int i = 0; i < tc; ++i) {
             if (i > 0) js << ",";
             js << "\"" << escapeJson(g_engine->getTrack(i)->name) << "\"";
         }
-        js << "],";
-        js << "audioFrames:[";
+        // Audio frames
+        js << "],[";
         for (int i = 0; i < tc; ++i) {
             if (i > 0) js << ",";
             AudioBuffer* buf = g_engine->getTrack(i)->audio.load(std::memory_order_relaxed);
             js << (buf ? (int64_t)buf->frames : 0);
         }
-        js << "],";
-        js << "clipStarts:[";
+        // Clip starts
+        js << "],[";
         for (int i = 0; i < tc; ++i) {
             if (i > 0) js << ",";
             js << (int64_t)g_engine->getTrack(i)->clipStart.load(std::memory_order_relaxed);
         }
-        js << "]";
-        js << "})";
+        js << "]])";
 
         g_wv->eval(js.str());
         ++tickCount;

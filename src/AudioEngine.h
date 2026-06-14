@@ -55,7 +55,6 @@ private:
     ma_context m_context;
     std::array<Track, MAX_TRACKS> m_tracks;
     std::array<std::unique_ptr<PluginChain>, MAX_TRACKS> m_pluginChains;
-    std::mutex m_pluginMutex;
     std::atomic<int> m_trackCount{1};
     bool m_initialized{false};
     TransportState m_transport;
