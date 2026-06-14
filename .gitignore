@@ -9,3 +9,13 @@ bin/
 .cache/
 .DS_Store
 imgui.ini
+hydraw_*.log
+*.mp3
+*.wav
+*.flac
+*.ogg
+*.aac
+*.m4a
+*.wma
+*.opus
+*.aiff
