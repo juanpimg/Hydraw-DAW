@@ -521,53 +521,48 @@ static std::string nativeGetPeakCache(const std::string& req) {
 
 static std::string nativeListDir(const std::string& req) {
     std::string a = unwrapArg(req);
-    // Diagnostic: echo the path C++ actually receives
-    {
-        std::string js = "log('DEBUG','DIR','C++ raw req: " + escapeJson(req) + "')";
-        if (g_wv) g_wv->eval(js);
-    }
-    {
-        std::string js = "log('DEBUG','DIR','C++ unwrapped path: " + escapeJson(a) + "')";
-        if (g_wv) g_wv->eval(js);
-    }
-    // Check if directory exists
-    {
-        std::error_code ec2;
-        bool exists = std::filesystem::exists(a, ec2);
-        std::string js = "log('DEBUG','DIR','exists=" + std::to_string(exists) + " ec=" + std::to_string(ec2.value()) + "')";
-        if (g_wv) g_wv->eval(js);
-    }
     std::ostringstream js;
     js << "[";
     bool first = true;
     int count = 0;
-    try {
-        std::error_code ec;
-        auto it = std::filesystem::directory_iterator(a, ec);
+
+    // Check if directory exists before iterating
+    std::error_code ec_ex;
+    bool dirExists = std::filesystem::is_directory(a, ec_ex);
+    if (!dirExists || ec_ex) {
+        log("DIR", "listDir '" + a + "' NOT a directory (ec=" + std::to_string(ec_ex.value()) + ")");
+        // Return a diagnostic entry so JS can show the error
+        js << "{\"name\":\"[ERROR: " << escapeJson(ec_ex.message()) << "]\",\"dir\":false,\"ext\":\"\"}";
+        js << "]";
+        return js.str();
+    }
+
+    std::error_code ec;
+    auto it = std::filesystem::directory_iterator(a, ec);
+    if (ec) {
+        log("DIR", "listDir iterator error for '" + a + "': " + ec.message());
+        js << "{\"name\":\"[ERROR: " << escapeJson(ec.message()) << "]\",\"dir\":false,\"ext\":\"\"}";
+        js << "]";
+        return js.str();
+    }
+
+    // Explicit begin/end iteration (more portable than range-for with error_code)
+    auto end = std::filesystem::end(it);
+    for (; it != end; it.increment(ec)) {
         if (ec) {
-            log("DIR", "listDir error for '" + a + "': " + ec.message());
-            std::string errjs = "log('ERROR','DIR','listDir: " + escapeJson(ec.message()) + " for " + escapeJson(a) + "')";
-            if (g_wv) g_wv->eval(errjs);
-            js << "]";
-            return js.str();
+            log("DIR", "listDir iteration error at entry " + std::to_string(count) + ": " + ec.message());
+            break;
         }
-        for (auto& entry : it) {
-            if (!first) js << ",";
-            first = false;
-            ++count;
-            bool isDir = entry.is_directory();
-            std::string name = entry.path().filename().string();
-            std::string ext = entry.path().extension().string();
-            js << "{"
-               << "\"name\":\"" << escapeJson(name) << "\","
-               << "\"dir\":" << (isDir ? "true" : "false") << ","
-               << "\"ext\":\"" << escapeJson(ext) << "\""
-               << "}";
-        }
-    } catch (std::exception& e) {
-        log("DIR", "listDir exception for '" + a + "': " + e.what());
-        std::string errjs = "log('ERROR','DIR','listDir exception: " + escapeJson(e.what()) + "')";
-        if (g_wv) g_wv->eval(errjs);
+        if (!first) js << ",";
+        first = false;
+        ++count;
+        std::string name = it->path().filename().string();
+        std::string ext = it->path().extension().string();
+        js << "{"
+           << "\"name\":\"" << escapeJson(name) << "\","
+           << "\"dir\":" << (it->is_directory() ? "true" : "false") << ","
+           << "\"ext\":\"" << escapeJson(ext) << "\""
+           << "}";
     }
     js << "]";
     log("DIR", "listDir '" + a + "' -> " + std::to_string(count) + " entries");
