@@ -844,13 +844,14 @@ function loadBrowser(path) {
       for (var i = 0; i < entries.length; i++) {
         var e = entries[i];
         if (!e || typeof e.name !== 'string') continue;
-        var isAudio = e.ext === '.wav' || e.ext === '.mp3' || e.ext === '.flac' || e.ext === '.ogg' || e.ext === '.aac' || e.ext === '.m4a' || e.ext === '.wma' || e.ext === '.opus' || e.ext === '.aiff' || e.ext === '.aif';
-        if (!e.dir && !isAudio) continue;
+        if (!e.dir) {
+          var isAudio = e.ext === '.wav' || e.ext === '.mp3' || e.ext === '.flac' || e.ext === '.ogg' || e.ext === '.aac' || e.ext === '.m4a' || e.ext === '.wma' || e.ext === '.opus' || e.ext === '.aiff' || e.ext === '.aif';
+          if (!isAudio) continue;
+        }
         var cls = 'item' + (e.dir ? ' dir' : ' audio');
         html += '<div class="' + cls + '" ' +
           (e.dir ? 'ondblclick="loadBrowser(\'' + escPath(path) + '/' + escPath(e.name) + '\')"' :
-           isAudio ? 'ondblclick="loadAudio(\'' + escPath(path) + '/' + escPath(e.name) + '\')"' :
-           '') +
+           'ondblclick="loadAudio(\'' + escPath(path) + '/' + escPath(e.name) + '\')"') +
           '>' + escHtml(e.dir ? e.name + '/' : e.name) + '</div>';
       }
       list.innerHTML = html;
@@ -862,7 +863,7 @@ function loadBrowser(path) {
 }
 
 function escPath(s) {
-  return String(s).replace(/\\/g,'\\\\').replace(/'/g,"\\'");
+  return String(s).replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/"/g,'&quot;');
 }
 
 function parentDir() {
