@@ -1,0 +1,608 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Hydraw DAW — a fast, open music studio for Linux</title>
+<meta name="description" content="Hydraw DAW is a fast, minimalist, open-source digital audio workstation for Linux. Built in C++17 with a hybrid HTML+JS UI. Inspired by BandLab and Ableton. MIT licensed." />
+<meta name="theme-color" content="#0a0a0e" />
+
+<meta property="og:title" content="Hydraw DAW — a fast, open music studio for Linux" />
+<meta property="og:description" content="A minimalist, open-source digital audio workstation for Linux. C++17, miniaudio, WebKit, CLAP." />
+<meta property="og:type" content="website" />
+<meta name="twitter:card" content="summary_large_image" />
+
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Major+Mono+Display&family=Fraunces:ital,opsz,wght,SOFT,WONK@0,9..144,300..900,0..100,0..1;1,9..144,300..900,0..100,0..1&family=JetBrains+Mono:ital,wght@0,100..800;1,100..800&display=swap" rel="stylesheet" />
+
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+<a class="skip" href="#main">Skip to content</a>
+
+<header class="topbar">
+  <a class="brand" href="#top" aria-label="Hydraw DAW home">
+    <span class="brand-glyph" aria-hidden="true">◉</span>
+    <span class="brand-name">hydraw</span>
+    <span class="brand-suffix">/daw</span>
+  </a>
+  <nav class="nav" aria-label="Primary">
+    <a href="#features">features</a>
+    <a href="#architecture">architecture</a>
+    <a href="#install">install</a>
+    <a href="#contribute">contribute</a>
+    <a href="#roadmap">roadmap</a>
+  </nav>
+  <div class="topbar-meta">
+    <span class="dot dot-green" aria-hidden="true"></span>
+    <span>v0.1.0</span>
+    <a class="gh" href="https://github.com/juanpimg/Hydraw-DAW" target="_blank" rel="noopener">
+      <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M12 .5C5.65.5.5 5.65.5 12a11.5 11.5 0 0 0 7.86 10.92c.58.1.79-.25.79-.56v-2c-3.2.7-3.88-1.37-3.88-1.37-.52-1.32-1.28-1.67-1.28-1.67-1.05-.72.08-.7.08-.7 1.16.08 1.77 1.19 1.77 1.19 1.03 1.77 2.7 1.26 3.36.96.1-.75.4-1.26.73-1.55-2.55-.29-5.24-1.28-5.24-5.69 0-1.26.45-2.29 1.19-3.1-.12-.29-.52-1.47.11-3.06 0 0 .97-.31 3.18 1.18a11 11 0 0 1 5.79 0c2.2-1.49 3.17-1.18 3.17-1.18.64 1.59.24 2.77.12 3.06.74.81 1.18 1.84 1.18 3.1 0 4.42-2.7 5.39-5.26 5.68.41.36.78 1.06.78 2.14v3.17c0 .31.21.67.8.55A11.5 11.5 0 0 0 23.5 12C23.5 5.65 18.35.5 12 .5Z"/></svg>
+      <span>github</span>
+    </a>
+  </div>
+</header>
+
+<main id="main">
+
+  <!-- HERO -->
+  <section class="hero" id="top">
+    <div class="hero-noise" aria-hidden="true"></div>
+
+    <div class="hero-grid">
+      <aside class="hero-side hero-side-left">
+        <div class="kv">
+          <span class="k">platform</span>
+          <span class="v">linux · x86_64</span>
+        </div>
+        <div class="kv">
+          <span class="k">lang</span>
+          <span class="v">c++17 / js</span>
+        </div>
+        <div class="kv">
+          <span class="k">engine</span>
+          <span class="v">miniaudio</span>
+        </div>
+        <div class="kv">
+          <span class="k">host</span>
+          <span class="v">clap · vst-free</span>
+        </div>
+        <div class="kv">
+          <span class="k">license</span>
+          <span class="v">mit</span>
+        </div>
+      </aside>
+
+      <div class="hero-center">
+        <p class="eyebrow">
+          <span class="eyebrow-pulse" aria-hidden="true"></span>
+          pre-release · looking for testers and contributors
+        </p>
+
+        <h1 class="wordmark" aria-label="Hydraw">
+          <span style="--i:0">h</span><span style="--i:1">y</span><span style="--i:2">d</span><span style="--i:3">r</span><span style="--i:4">a</span><span style="--i:5">w</span>
+        </h1>
+
+        <p class="tagline">
+          A fast, minimalist, open-source <em>digital audio workstation</em>
+          for Linux. Built by people who got tired of waiting for the play
+          button to feel like the play button.
+        </p>
+
+        <div class="hero-cta">
+          <a class="btn btn-primary" href="#install">
+            <span>install it</span>
+            <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M8 1.5a.5.5 0 0 1 .5.5v8.79l2.65-2.64a.5.5 0 1 1 .7.71l-3.5 3.5a.5.5 0 0 1-.7 0l-3.5-3.5a.5.5 0 1 1 .7-.71L7.5 10.8V2a.5.5 0 0 1 .5-.5Zm-6 12a.5.5 0 0 1 .5.5V14h11v-.5a.5.5 0 0 1 1 0v1a.5.5 0 0 1-.5.5H2.5A.5.5 0 0 1 2 15v-1a.5.5 0 0 1 .5-.5Z"/></svg>
+          </a>
+          <a class="btn btn-ghost" href="#contribute">
+            <span>build it with us</span>
+            <span class="btn-arrow" aria-hidden="true">→</span>
+          </a>
+        </div>
+      </div>
+
+      <aside class="hero-side hero-side-right" aria-hidden="true">
+        <div class="scope">
+          <div class="scope-grid"></div>
+          <svg class="scope-wave" viewBox="0 0 200 80" preserveAspectRatio="none">
+            <path id="scopePath" d="M0,40 Q10,5 20,40 T40,40 T60,40 T80,40 T100,40 T120,40 T140,40 T160,40 T180,40 T200,40" fill="none" stroke="url(#scopeGrad)" stroke-width="1.2" />
+            <defs>
+              <linearGradient id="scopeGrad" x1="0" x2="1" y1="0" y2="0">
+                <stop offset="0" stop-color="#66ddff"/>
+                <stop offset=".45" stop-color="#5599ff"/>
+                <stop offset="1" stop-color="#44bb66"/>
+              </linearGradient>
+            </defs>
+          </svg>
+          <div class="scope-meta">
+            <span>ch.1</span><span>−6.0 db</span>
+          </div>
+        </div>
+
+        <ul class="meter-list">
+          <li><span class="ml-label">L</span><span class="ml-bar"><i style="--w:72%"></i></span></li>
+          <li><span class="ml-label">R</span><span class="ml-bar"><i style="--w:68%"></i></span></li>
+          <li><span class="ml-label">1</span><span class="ml-bar"><i style="--w:54%"></i></span></li>
+          <li><span class="ml-label">2</span><span class="ml-bar"><i style="--w:40%"></i></span></li>
+          <li><span class="ml-label">3</span><span class="ml-bar"><i style="--w:30%"></i></span></li>
+        </ul>
+      </aside>
+    </div>
+
+    <div class="spectrum" aria-hidden="true" id="spectrum"></div>
+
+    <a class="scroll-cue" href="#intro">
+      <span>scroll</span>
+      <span class="scroll-line"></span>
+    </a>
+  </section>
+
+  <!-- INTRO -->
+  <section class="intro" id="intro">
+    <p class="dropcap">
+      <span class="dropcap-letter" aria-hidden="true">H</span>
+      ydraw is what happens when you build a DAW with the same
+      stack you’d build a game with. Native C++17 audio, a hybrid
+      HTML&nbsp;UI rendered by WebKit, no Electron, no Java, no
+      proprietary plugin formats. Drag a WAV in, arm a track,
+      load a CLAP, hit space. The window doesn’t even breathe hard.
+    </p>
+  </section>
+
+  <!-- FEATURES -->
+  <section class="features" id="features">
+    <header class="section-head">
+      <span class="section-num">01 / what it does</span>
+      <h2 class="section-title">
+        Everything you need to <em>lay down a track</em>.<br/>
+        Nothing you don’t.
+      </h2>
+    </header>
+
+    <ol class="feature-grid">
+      <li class="feature">
+        <span class="feature-num">01</span>
+        <h3>Audio engine</h3>
+        <p>
+          A <code>miniaudio</code> callback pumping the mix bus in
+          real time. Lock-free atomics feed the UI at 30&nbsp;Hz so
+          meters don’t fight the render thread.
+        </p>
+        <ul class="tags">
+          <li>low-latency</li>
+          <li>alsa</li>
+          <li>pulse</li>
+        </ul>
+      </li>
+      <li class="feature">
+        <span class="feature-num">02</span>
+        <h3>Hybrid UI</h3>
+        <p>
+          Layout, transport, mixer and FX chain drawn in HTML +
+          Tailwind. The window is GTK&nbsp;3, the renderer is
+          WebKit2GTK. 22 native bindings keep JS honest.
+        </p>
+        <ul class="tags">
+          <li>html5</li>
+          <li>webkit</li>
+          <li>cn() bridge</li>
+        </ul>
+      </li>
+      <li class="feature">
+        <span class="feature-num">03</span>
+        <h3>CLAP hosting</h3>
+        <p>
+          Load any <code>.clap</code> plugin you find. Per-track FX
+          chains via <code>dlopen</code>. PeakEater ships in the
+          box as a soft-clipper for the master bus.
+        </p>
+        <ul class="tags">
+          <li>clap 1.2</li>
+          <li>fx chains</li>
+          <li>bypass</li>
+        </ul>
+      </li>
+      <li class="feature">
+        <span class="feature-num">04</span>
+        <h3>Drag, drop, done</h3>
+        <p>
+          Drop WAVs from your file manager straight onto a track.
+          Drop a folder, get a session. Drop a clap on the FX
+          chain, it just works.
+        </p>
+        <ul class="tags">
+          <li>text/uri-list</li>
+          <li>waveform render</li>
+          <li>16 tracks</li>
+        </ul>
+      </li>
+    </ol>
+  </section>
+
+  <!-- ARCHITECTURE -->
+  <section class="architecture" id="architecture">
+    <header class="section-head">
+      <span class="section-num">02 / under the hood</span>
+      <h2 class="section-title">
+        A <em>clean seam</em> between pixels and samples.
+      </h2>
+      <p class="section-sub">
+        Hydraw treats the UI as a thin client over a deterministic
+        audio core. One direction of data flow, one bridge, no
+        magic.
+      </p>
+    </header>
+
+    <div class="arch-wrap">
+<pre class="arch" aria-label="Hydraw architecture diagram"><span class="c-c">// html5 · tailwind · vanilla js       (assets/index.html)
+</span><span class="c-box">┌──────────────────────────────────────────────┐
+│  transport  ·  timeline  ·  mixer  ·  fx      │
+└──────────────────────────┬───────────────────┘
+                           │  <span class="c-cyan">cn(name, arg)</span>    &lt;-  22 native bindings
+                           ▼
+<span class="c-c">// c++17 · webview/webview 0.12        (src/main.cpp)
+</span><span class="c-box">┌──────────────────────────┴───────────────────┐
+│  atomic state  ·  eval() update thread (30Hz) │
+└──────────────────────────┬───────────────────┘
+                           │
+        ┌──────────────────┼──────────────────┐
+        ▼                  ▼                  ▼
+<span class="c-c">// audio engine            // clap host        // file i/o
+</span>   <span class="c-yellow">AudioEngine</span>           <span class="c-yellow">PluginHost</span>           <span class="c-yellow">WavLoader</span>
+   miniaudio callback      dlopen(.clap)         RIFF parser
+   peak cache (lock-free)  per-track chains      waveform peaks
+        │                  │                  │
+        └──────────────────┼──────────────────┘
+                           ▼
+<span class="c-c">// linux kernel
+</span>   <span class="c-red">alsa</span>  ·  <span class="c-red">pulseaudio</span>  ·  <span class="c-red">pipewire</span></pre>
+    </div>
+
+    <p class="arch-note">
+      The audio callback never touches the webview. UI updates ride
+      on atomics. You can read the engine in <code>src/AudioEngine.cpp</code>
+      and have it in your head in an afternoon.
+    </p>
+  </section>
+
+  <!-- MOCKUP -->
+  <section class="mockup-section">
+    <header class="section-head">
+      <span class="section-num">03 / what it looks like</span>
+      <h2 class="section-title">
+        Familiar to Ableton users.<br/>
+        Honest to your <em>CPU</em>.
+      </h2>
+    </header>
+
+    <div class="mockup" aria-label="Hydraw DAW user interface preview">
+      <div class="mock-transport">
+        <div class="mock-buttons">
+          <span class="mb mb-play" title="play"></span>
+          <span class="mb mb-stop" title="stop"></span>
+          <span class="mb mb-rec" title="record (coming soon)"></span>
+        </div>
+        <div class="mock-time"><span>00</span><span>:</span><span>01</span><span>:</span><span class="hl">14</span><span class="sm">.230</span></div>
+        <div class="mock-tempo">128.0 bpm · 4/4</div>
+        <div class="mock-meter">
+          <span class="mm mm-l" style="--w:62%"></span>
+          <span class="mm mm-r" style="--w:58%"></span>
+        </div>
+      </div>
+
+      <div class="mock-body">
+        <div class="mock-timeline">
+          <div class="mock-ruler">
+            <span style="--x:0%">1</span><span style="--x:8%">9</span><span style="--x:16%">17</span>
+            <span style="--x:24%">25</span><span style="--x:32%">33</span><span style="--x:40%">41</span>
+            <span style="--x:48%">49</span><span style="--x:56%">57</span><span style="--x:64%">65</span>
+            <span style="--x:72%">73</span><span style="--x:80%">81</span><span style="--x:88%">89</span>
+            <span style="--x:96%">97</span>
+          </div>
+          <div class="mock-playhead" style="--x:18%"></div>
+
+          <div class="mock-track" style="--row:0">
+            <div class="mt-name">kick</div>
+            <div class="mt-clip" style="--start:0%; --len:18%">
+              <svg viewBox="0 0 200 40" preserveAspectRatio="none"><path d="M2,20 q3,-15 6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0" fill="none" stroke="#44bb66" stroke-width="1"/></svg>
+            </div>
+            <div class="mt-clip" style="--start:22%; --len:14%">
+              <svg viewBox="0 0 200 40" preserveAspectRatio="none"><path d="M2,20 q3,-15 6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0" fill="none" stroke="#44bb66" stroke-width="1"/></svg>
+            </div>
+            <div class="mt-clip" style="--start:42%; --len:18%">
+              <svg viewBox="0 0 200 40" preserveAspectRatio="none"><path d="M2,20 q3,-15 6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0" fill="none" stroke="#44bb66" stroke-width="1"/></svg>
+            </div>
+            <div class="mt-clip" style="--start:64%; --len:14%">
+              <svg viewBox="0 0 200 40" preserveAspectRatio="none"><path d="M2,20 q3,-15 6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0" fill="none" stroke="#44bb66" stroke-width="1"/></svg>
+            </div>
+            <div class="mt-clip" style="--start:82%; --len:14%">
+              <svg viewBox="0 0 200 40" preserveAspectRatio="none"><path d="M2,20 q3,-15 6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0" fill="none" stroke="#44bb66" stroke-width="1"/></svg>
+            </div>
+          </div>
+
+          <div class="mock-track" style="--row:1">
+            <div class="mt-name">bass</div>
+            <div class="mt-clip mt-clip-long" style="--start:0%; --len:48%">
+              <svg viewBox="0 0 200 40" preserveAspectRatio="none"><path d="M2,20 q3,-15 6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0" fill="none" stroke="#5599ff" stroke-width="1.2"/></svg>
+            </div>
+            <div class="mt-clip mt-clip-long" style="--start:50%; --len:48%">
+              <svg viewBox="0 0 200 40" preserveAspectRatio="none"><path d="M2,20 q3,-15 6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0" fill="none" stroke="#5599ff" stroke-width="1.2"/></svg>
+            </div>
+          </div>
+
+          <div class="mock-track" style="--row:2">
+            <div class="mt-name">vox</div>
+            <div class="mt-clip mt-clip-long" style="--start:8%; --len:34%">
+              <svg viewBox="0 0 200 40" preserveAspectRatio="none"><path d="M2,20 q3,-12 6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0" fill="none" stroke="#eebb44" stroke-width="1"/></svg>
+            </div>
+            <div class="mt-clip mt-clip-long" style="--start:48%; --len:38%">
+              <svg viewBox="0 0 200 40" preserveAspectRatio="none"><path d="M2,20 q3,-12 6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0" fill="none" stroke="#eebb44" stroke-width="1"/></svg>
+            </div>
+          </div>
+
+          <div class="mock-track" style="--row:3">
+            <div class="mt-name">pad</div>
+            <div class="mt-clip mt-clip-long" style="--start:0%; --len:100%"></div>
+          </div>
+        </div>
+
+        <div class="mock-mixer">
+          <div class="mix-ch">
+            <div class="mix-name">kick</div>
+            <div class="mix-fader"><div class="mix-knob" style="--p:62%"></div></div>
+            <div class="mix-pan">C</div>
+            <div class="mix-mtr"><i style="--w:70%"></i></div>
+          </div>
+          <div class="mix-ch">
+            <div class="mix-name">bass</div>
+            <div class="mix-fader"><div class="mix-knob" style="--p:48%"></div></div>
+            <div class="mix-pan">L20</div>
+            <div class="mix-mtr"><i style="--w:54%"></i></div>
+          </div>
+          <div class="mix-ch">
+            <div class="mix-name">vox</div>
+            <div class="mix-fader"><div class="mix-knob" style="--p:70%"></div></div>
+            <div class="mix-pan">R10</div>
+            <div class="mix-mtr"><i style="--w:62%"></i></div>
+          </div>
+          <div class="mix-ch">
+            <div class="mix-name">pad</div>
+            <div class="mix-fader"><div class="mix-knob" style="--p:38%"></div></div>
+            <div class="mix-pan">C</div>
+            <div class="mix-mtr"><i style="--w:30%"></i></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- INSTALL -->
+  <section class="install" id="install">
+    <header class="section-head">
+      <span class="section-num">04 / get it running</span>
+      <h2 class="section-title">
+        Three commands.<br/>
+        <em>Then you’re making noise.</em>
+      </h2>
+    </header>
+
+    <ol class="install-steps">
+      <li>
+        <span class="step-num">01</span>
+        <h3>Install dependencies</h3>
+        <p>GTK 3, WebKit2GTK 4.1, ALSA. The script does the work for you.</p>
+        <div class="term">
+          <span class="term-prompt">$</span>
+          <code>chmod +x scripts/install_deps.sh && ./scripts/install_deps.sh</code>
+          <button class="copy" data-copy="chmod +x scripts/install_deps.sh && ./scripts/install_deps.sh" aria-label="Copy command">copy</button>
+        </div>
+      </li>
+      <li>
+        <span class="step-num">02</span>
+        <h3>Build</h3>
+        <p>CMake pulls miniaudio and webview/webview 0.12.0 via FetchContent.</p>
+        <div class="term">
+          <span class="term-prompt">$</span>
+          <code>cmake -B build && cmake --build build -j$(nproc)</code>
+          <button class="copy" data-copy="cmake -B build && cmake --build build -j$(nproc)" aria-label="Copy command">copy</button>
+        </div>
+      </li>
+      <li>
+        <span class="step-num">03</span>
+        <h3>Launch</h3>
+        <p>1.5&nbsp;MB binary. No installer, no daemon, no telemetry.</p>
+        <div class="term">
+          <span class="term-prompt">$</span>
+          <code>./build/hydraw_daw</code>
+          <button class="copy" data-copy="./build/hydraw_daw" aria-label="Copy command">copy</button>
+        </div>
+      </li>
+    </ol>
+  </section>
+
+  <!-- CONTRIBUTE -->
+  <section class="contribute" id="contribute">
+    <header class="section-head">
+      <span class="section-num">05 / build it with us</span>
+      <h2 class="section-title">
+        Hydraw is <em>one engineer on weekends</em>.<br/>
+        It needs hands.
+      </h2>
+      <p class="section-sub">
+        No NDA, no CLA, no design committee. Open a PR, push a
+        plugin, write a test, fix a typo. The good-first-issues
+        below are good.
+      </p>
+    </header>
+
+    <div class="contrib-grid">
+      <article class="contrib">
+        <div class="contrib-tag">engine</div>
+        <h3>Audio &amp; DSP</h3>
+        <p>
+          You like reading callback graphs. The engine is in
+          <code>src/AudioEngine.cpp</code>. Recording, automation,
+          sample-accurate transport, loop regions — all on the
+          table.
+        </p>
+        <ul>
+          <li>C++17, lock-free atomics</li>
+          <li>miniaudio backend</li>
+          <li>PCM, float32 buffers</li>
+        </ul>
+      </article>
+      <article class="contrib">
+        <div class="contrib-tag">host</div>
+        <h3>CLAP &amp; plugins</h3>
+        <p>
+          The plugin layer (<code>src/Plugin/</code>) is a thin
+          <code>dlopen</code> wrapper. Add GUI embedding, state
+          save/load, parameter modulation, MIDI 2.0.
+        </p>
+        <ul>
+          <li>CLAP 1.2 spec</li>
+          <li>per-track FX chains</li>
+          <li>testing with free CLAPs</li>
+        </ul>
+      </article>
+      <article class="contrib">
+        <div class="contrib-tag">ui</div>
+        <h3>Web UI &amp; bindings</h3>
+        <p>
+          HTML + Tailwind + vanilla JS, bridged into C++ via
+          webview. 22 bindings exist. 200 are possible. Make
+          <code>cn()</code> sing.
+        </p>
+        <ul>
+          <li>HTML5, modern JS</li>
+          <li>no build step required</li>
+          <li>WebKit-friendly CSS</li>
+        </ul>
+      </article>
+      <article class="contrib">
+        <div class="contrib-tag">test</div>
+        <h3>QA, docs, samples</h3>
+        <p>
+          Run the binary on weird distros, file issues with
+          <code>journalctl</code> output, write a getting-started
+          tutorial, ship a starter sample pack.
+        </p>
+        <ul>
+          <li>Arch, Fedora, Nix, Ubuntu</li>
+          <li>markdown &amp; examples</li>
+          <li>WAV test fixtures</li>
+        </ul>
+      </article>
+    </div>
+
+    <div class="contrib-cta">
+      <a class="btn btn-primary" href="https://github.com/juanpimg/Hydraw-DAW/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22" target="_blank" rel="noopener">
+        <span>pick a good first issue</span>
+        <span class="btn-arrow" aria-hidden="true">↗</span>
+      </a>
+      <a class="btn btn-ghost" href="https://github.com/juanpimg/Hydraw-DAW/blob/master/CONTRIBUTING.md" target="_blank" rel="noopener">
+        <span>read the contributing guide</span>
+        <span class="btn-arrow" aria-hidden="true">→</span>
+      </a>
+    </div>
+  </section>
+
+  <!-- ROADMAP -->
+  <section class="roadmap" id="roadmap">
+    <header class="section-head">
+      <span class="section-num">06 / what’s next</span>
+      <h2 class="section-title">
+        The path from <em>v0.1.0</em> to a session you can finish.
+      </h2>
+    </header>
+
+    <ol class="timeline">
+      <li class="tl tl-done">
+        <span class="tl-dot"></span>
+        <h3>v0.1 · core</h3>
+        <p>Multi-track playback, mixer, WAV drop, CLAP hosting, UI bridge.</p>
+        <span class="tl-meta">shipped</span>
+      </li>
+      <li class="tl tl-active">
+        <span class="tl-dot"></span>
+        <h3>v0.2 · capture</h3>
+        <p>Multi-track recording, input monitoring, take lanes, basic punch in.</p>
+        <span class="tl-meta">in progress</span>
+      </li>
+      <li class="tl">
+        <span class="tl-dot"></span>
+        <h3>v0.3 · mix</h3>
+        <p>Automation lanes, sends/buses, gain staging, frozen tracks.</p>
+        <span class="tl-meta">queued</span>
+      </li>
+      <li class="tl">
+        <span class="tl-dot"></span>
+        <h3>v0.4 · export</h3>
+        <p>Offline render to WAV/FLAC, stem export, project files (.hydraw).</p>
+        <span class="tl-meta">queued</span>
+      </li>
+      <li class="tl">
+        <span class="tl-dot"></span>
+        <h3>v0.5 · midi</h3>
+        <p>MIDI in/out via ALSA-seq, virtual keyboard, piano roll, MPE.</p>
+        <span class="tl-meta">queued</span>
+      </li>
+    </ol>
+  </section>
+
+  <!-- CREDITS -->
+  <section class="credits">
+    <p>
+      <strong>Credits.</strong> Hydraw DAW is MIT-licensed and built
+      on the shoulders of giants: <a href="https://miniaud.io" target="_blank" rel="noopener">miniaudio</a>,
+      <a href="https://github.com/webview/webview" target="_blank" rel="noopener">webview/webview</a>,
+      <a href="https://cleveraudio.org" target="_blank" rel="noopener">CLAP</a>, and
+      <a href="https://github.com/vvvar/PeakEater" target="_blank" rel="noopener">PeakEater</a>
+      (GPL‑3.0) shipping as the default master soft-clipper.
+    </p>
+  </section>
+
+</main>
+
+<footer class="footer">
+  <div class="foot-grid">
+    <div>
+      <div class="foot-brand">hydraw<span>/daw</span></div>
+      <p class="foot-tag">a fast, open music studio for linux.</p>
+    </div>
+    <div>
+      <h4>project</h4>
+      <ul>
+        <li><a href="https://github.com/juanpimg/Hydraw-DAW" target="_blank" rel="noopener">repository</a></li>
+        <li><a href="https://github.com/juanpimg/Hydraw-DAW/releases" target="_blank" rel="noopener">releases</a></li>
+        <li><a href="https://github.com/juanpimg/Hydraw-DAW/issues" target="_blank" rel="noopener">issues</a></li>
+      </ul>
+    </div>
+    <div>
+      <h4>read</h4>
+      <ul>
+        <li><a href="https://github.com/juanpimg/Hydraw-DAW#readme" target="_blank" rel="noopener">readme</a></li>
+        <li><a href="https://github.com/juanpimg/Hydraw-DAW/blob/master/CLAP_HOST_SPEC.md" target="_blank" rel="noopener">clap host spec</a></li>
+        <li><a href="https://github.com/juanpimg/Hydraw-DAW/blob/master/DECISIONS.md" target="_blank" rel="noopener">design decisions</a></li>
+      </ul>
+    </div>
+    <div>
+      <h4>license</h4>
+      <ul>
+        <li>mit · code</li>
+        <li>gpl‑3.0 · peakeater</li>
+        <li>built on linux</li>
+      </ul>
+    </div>
+  </div>
+  <div class="foot-bottom">
+    <span>© 2026 hydraw contributors</span>
+    <span class="foot-sig">made with c++ and a little bit of spite</span>
+  </div>
+</footer>
+
+<script src="script.js"></script>
+</body>
+</html>
