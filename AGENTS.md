@@ -38,10 +38,10 @@ Args use pipe‑delimited format (e.g. `"idx,val"`). All C++ functions use `safe
 - Waveform: canvas 2D, `rgba(130,150,190,0.6)`, 200 bars max.
 - Popups: centered modal for CLAP plugin list.
 
-## Git
-- Repo: `git@github.com:juanpimg/Hydraw-DAW.git`
-- Branch: `master`
-- Ignored: `build/`, `cmake-build-*/`, `extern/`, `plugins/`, `*.o`, `imgui.ini`, `.DS_Store`.
+## Git & Releases
+- Repo: `git@github.com:juanpimg/Hydraw-DAW.git`, branch: `master`.
+- Ignored: `build/`, `cmake-build-*/`, `extern/`, `plugins/`, `*.o`, `imgui.ini`, `.DS_Store`, `*.log`, `*.mp3`, `*.wav`.
+- **Releases**: GitHub Actions workflow (`.github/workflows/release.yml`) crea release automáticamente al pushear un tag `v*`. Para crear release: `git tag vX.Y.Z && git push origin vX.Y.Z`. Los tags actuales siempre cuentan como pre‑release mientras el proyecto sea temprano. Todas las versions significan poner tag + push.
 
 ## Known Limitations
 - No recording, MIDI, or audio export yet.
