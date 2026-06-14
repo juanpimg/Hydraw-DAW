@@ -525,44 +525,23 @@ static std::string nativeListDir(const std::string& req) {
     js << "[";
     bool first = true;
     int count = 0;
-
-    // Check if directory exists before iterating
-    std::error_code ec_ex;
-    bool dirExists = std::filesystem::is_directory(a, ec_ex);
-    if (!dirExists || ec_ex) {
-        log("DIR", "listDir '" + a + "' NOT a directory (ec=" + std::to_string(ec_ex.value()) + ")");
-        // Return a diagnostic entry so JS can show the error
-        js << "{\"name\":\"[ERROR: " << escapeJson(ec_ex.message()) << "]\",\"dir\":false,\"ext\":\"\"}";
-        js << "]";
-        return js.str();
-    }
-
-    std::error_code ec;
-    auto it = std::filesystem::directory_iterator(a, ec);
-    if (ec) {
-        log("DIR", "listDir iterator error for '" + a + "': " + ec.message());
-        js << "{\"name\":\"[ERROR: " << escapeJson(ec.message()) << "]\",\"dir\":false,\"ext\":\"\"}";
-        js << "]";
-        return js.str();
-    }
-
-    // Explicit begin/end iteration (more portable than range-for with error_code)
-    auto end = std::filesystem::end(it);
-    for (; it != end; it.increment(ec)) {
-        if (ec) {
-            log("DIR", "listDir iteration error at entry " + std::to_string(count) + ": " + ec.message());
-            break;
+    try {
+        for (const auto& entry : std::filesystem::directory_iterator(a)) {
+            if (!first) js << ",";
+            first = false;
+            ++count;
+            std::string name = entry.path().filename().string();
+            std::string ext = entry.path().extension().string();
+            js << "{"
+               << "\"name\":\"" << escapeJson(name) << "\","
+               << "\"dir\":" << (entry.is_directory() ? "true" : "false") << ","
+               << "\"ext\":\"" << escapeJson(ext) << "\""
+               << "}";
         }
-        if (!first) js << ",";
-        first = false;
-        ++count;
-        std::string name = it->path().filename().string();
-        std::string ext = it->path().extension().string();
-        js << "{"
-           << "\"name\":\"" << escapeJson(name) << "\","
-           << "\"dir\":" << (it->is_directory() ? "true" : "false") << ","
-           << "\"ext\":\"" << escapeJson(ext) << "\""
-           << "}";
+    } catch (const std::filesystem::filesystem_error& e) {
+        log("DIR", "listDir error: " + std::string(e.what()));
+    } catch (const std::exception& e) {
+        log("DIR", "listDir exception: " + std::string(e.what()));
     }
     js << "]";
     log("DIR", "listDir '" + a + "' -> " + std::to_string(count) + " entries");
