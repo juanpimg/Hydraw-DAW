@@ -151,6 +151,8 @@ bool PluginChain::addPlugin(const char* libraryPath, const char* pluginId) {
     pi.plugin = plugin;
     pi.dedicatedHost = std::move(dedicatedHost);
     pi.name = pluginId;
+    pi.path = libraryPath;
+    pi.id = pluginId;
     pi.active = true;
 
     m_plugins.push_back(std::move(pi));
@@ -211,60 +213,82 @@ void PluginChain::process(const float* input, float* output, int frames, int cha
         if (!pi.active) continue;
         if (!pi.plugin || !pi.plugin->process) continue;
 
-        // Query plugin's input channel count
-        int pluginChannels = numChannels;
         auto* audioPorts = (const clap_plugin_audio_ports_t*)
             pi.plugin->get_extension(pi.plugin, CLAP_EXT_AUDIO_PORTS);
-        if (audioPorts && audioPorts->count && audioPorts->count(pi.plugin, true) > 0) {
-            clap_audio_port_info_t portInfo;
-            if (audioPorts->get(pi.plugin, 0, true, &portInfo))
-                pluginChannels = (int)portInfo.channel_count;
-        }
-        int useChannels = pluginChannels < 1 ? 1 : (pluginChannels > 2 ? 2 : pluginChannels);
-        bool needsDownmix = (numChannels == 2 && useChannels == 1);
 
-        // Downmix stereo → mono for mono plugins
-        std::vector<float> monoWork;
+        // Query plugin's actual audio port configuration
+        uint32_t inPortCount = 0, outPortCount = 0;
+        clap_audio_port_info_t inPortInfo, outPortInfo;
+        bool hasInPort = false, hasOutPort = false;
+        if (audioPorts && audioPorts->count) {
+            inPortCount = audioPorts->count(pi.plugin, true);
+            outPortCount = audioPorts->count(pi.plugin, false);
+            if (inPortCount > 0 && audioPorts->get)
+                hasInPort = audioPorts->get(pi.plugin, 0, true, &inPortInfo);
+            if (outPortCount > 0 && audioPorts->get)
+                hasOutPort = audioPorts->get(pi.plugin, 0, false, &outPortInfo);
+        }
+
+        int pluginInCh = hasInPort ? (int)inPortInfo.channel_count : numChannels;
+        int pluginOutCh = hasOutPort ? (int)outPortInfo.channel_count : numChannels;
+        if (inPortCount == 0) pluginInCh = 0;
+        if (outPortCount == 0) pluginOutCh = 0;
+        if (pluginInCh > 2) pluginInCh = 2;
+        if (pluginOutCh > 2) pluginOutCh = 2;
+
+        // Downmix stereo → mono for mono-input plugins
+        bool needsDownmix = (numChannels == 2 && pluginInCh == 1);
+        bool needsUpmix = (numChannels == 2 && pluginOutCh == 1);
+
+        std::vector<float> work;
+        work.resize(numFrames * 2, 0.0f);
+
         const float* monoIn[2] = {inPtrs[0], inPtrs[1]};
         float* monoOut[2] = {outPtrs[0], outPtrs[1]};
+
         if (needsDownmix) {
-            monoWork.resize(numFrames);
             for (int f = 0; f < numFrames; ++f)
-                monoWork[f] = (inPtrs[0][f] + inPtrs[1][f]) * 0.5f;
-            monoIn[0] = monoWork.data();
+                work[f] = (inPtrs[0][f] + inPtrs[1][f]) * 0.5f;
+            monoIn[0] = work.data();
             monoIn[1] = nullptr;
-            monoOut[0] = monoWork.data();
+        }
+        // For mono output, route through work buffer so we can upmix later
+        if (needsUpmix) {
+            monoOut[0] = work.data() + (needsDownmix ? numFrames : 0);
             monoOut[1] = nullptr;
         }
 
-        clap_audio_buffer_t inBuf;
-        inBuf.data32 = (float**)monoIn;
-        inBuf.data64 = nullptr;
-        inBuf.channel_count = (uint32_t)useChannels;
-        inBuf.latency = 0;
+        clap_audio_buffer_t inBuf, outBuf;
+        clap_audio_buffer_t* pInBuf = (inPortCount > 0 && pluginInCh > 0) ? &inBuf : nullptr;
+        clap_audio_buffer_t* pOutBuf = (outPortCount > 0 && pluginOutCh > 0) ? &outBuf : nullptr;
 
-        clap_audio_buffer_t outBuf;
-        outBuf.data32 = (float**)monoOut;
-        outBuf.data64 = nullptr;
-        outBuf.channel_count = (uint32_t)useChannels;
-        outBuf.latency = 0;
+        if (pInBuf) {
+            inBuf.data32 = (float**)monoIn;
+            inBuf.data64 = nullptr;
+            inBuf.channel_count = (uint32_t)pluginInCh;
+            inBuf.latency = 0;
+        }
+        if (pOutBuf) {
+            outBuf.data32 = (float**)monoOut;
+            outBuf.data64 = nullptr;
+            outBuf.channel_count = (uint32_t)pluginOutCh;
+            outBuf.latency = 0;
+        }
 
-        // Provide proper CLAP event structures — CRITICAL for DPF parameter sync
         HostInputEvents inEvents;
         HostOutputEvents outEvents;
 
         clap_process_t proc;
         memset(&proc, 0, sizeof(proc));
-        proc.audio_inputs = &inBuf;
-        proc.audio_outputs = &outBuf;
-        proc.audio_inputs_count = 1;
-        proc.audio_outputs_count = 1;
+        proc.audio_inputs = pInBuf;
+        proc.audio_outputs = pOutBuf;
+        proc.audio_inputs_count = inPortCount;
+        proc.audio_outputs_count = outPortCount;
         proc.frames_count = (uint32_t)numFrames;
         proc.in_events = &inEvents.list;
         proc.out_events = &outEvents.list;
 
         try {
-            // Call flush with proper event structs first (parameter sync for non-DPF plugins)
             const clap_plugin_params_t* pparams = (const clap_plugin_params_t*)
                 pi.plugin->get_extension(pi.plugin, CLAP_EXT_PARAMS);
             if (pparams && pparams->flush)
@@ -274,11 +298,11 @@ void PluginChain::process(const float* input, float* output, int frames, int cha
             fprintf(stderr, "[PLUGIN] process exception in %s\n", pi.name.c_str());
         }
 
-        // Upmix mono back to stereo
-        if (needsDownmix && numChannels == 2) {
+        // Upmix mono output → stereo
+        if (needsUpmix && numChannels == 2) {
             for (int f = 0; f < numFrames; ++f) {
-                outPtrs[0][f] = monoWork[f];
-                outPtrs[1][f] = monoWork[f];
+                outPtrs[0][f] = monoOut[0][f];
+                outPtrs[1][f] = monoOut[0][f];
             }
         }
 
@@ -326,6 +350,18 @@ bool PluginChain::isBypassed(int index) const {
     std::lock_guard<std::mutex> lock(m_mutex);
     if (index < 0 || index >= (int)m_plugins.size()) return true;
     return !m_plugins[index].active;
+}
+
+const char* PluginChain::getPluginPath(int index) const {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    if (index < 0 || index >= (int)m_plugins.size()) return "";
+    return m_plugins[index].path.c_str();
+}
+
+const char* PluginChain::getPluginId(int index) const {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    if (index < 0 || index >= (int)m_plugins.size()) return "";
+    return m_plugins[index].id.c_str();
 }
 
 const clap_plugin_t* PluginChain::getPlugin(int index) const {

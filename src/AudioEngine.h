@@ -47,6 +47,13 @@ public:
     // Plugin chain access
     PluginChain* getPluginChain(int trackIndex);
 
+    // Export offline render (bouncing)
+    bool renderOffline(const char* wavPath, int sampleRate, int bitDepth);
+
+    // Track audio file path
+    void setTrackAudioPath(int index, const char* path);
+    std::string getTrackAudioPath(int index);
+
 private:
     static void audioCallback(ma_device* pDevice, void* pOutput, const void* pInput, ma_uint32 frameCount);
 

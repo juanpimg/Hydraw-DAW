@@ -33,6 +33,7 @@ struct MasterBus {
 
 struct Track {
     std::string name;
+    std::string audioFilePath;
     std::array<std::atomic<float>, BLOCK_SIZE> bufferL;
     std::array<std::atomic<float>, BLOCK_SIZE> bufferR;
     int writeIndex{0};

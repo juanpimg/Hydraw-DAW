@@ -10,6 +10,8 @@ struct PluginInstance {
     const clap_plugin_t* plugin{nullptr};
     std::unique_ptr<clap_host_t> dedicatedHost;
     std::string name;
+    std::string path;
+    std::string id;
     bool active{true};
 };
 
@@ -27,6 +29,8 @@ public:
 
     int getPluginCount() const;
     const char* getPluginName(int index) const;
+    const char* getPluginPath(int index) const;
+    const char* getPluginId(int index) const;
     bool isBypassed(int index) const;
     const clap_plugin_t* getPlugin(int index) const;
 

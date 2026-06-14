@@ -1,6 +1,7 @@
 #include "AudioEngine.h"
 #include "Plugin/PluginChain.h"
 #include "Plugin/ClapHost.h"
+#include "Project/ProjectSerializer.h"
 #include <webview/webview.h>
 #include <webkit2/webkit2.h>
 #include <gtk/gtk.h>
@@ -29,6 +30,8 @@ static AudioEngine* g_engine = nullptr;
 static webview::webview* g_wv = nullptr;
 static std::atomic<bool> g_running{true};
 static std::atomic<bool> g_pageReady{false};
+static std::atomic<uint32_t> g_uiDirty{0xFFFFFFFF};
+constexpr uint32_t kDirtyExtended = 1u << 0;
 
 // ── PLUGIN GUI ── (must be before uiUpdateLoop)
 struct PluginGuiState {
@@ -125,6 +128,14 @@ static float safeStof(const std::string& s, float def = 0.0f) {
     }
 }
 
+static float safeFloat(float v, float def = 0.0f) {
+    return (std::isnan(v) || std::isinf(v)) ? def : v;
+}
+
+static float safePeak(float v) {
+    return (std::isnan(v) || std::isinf(v)) ? 0.0f : std::max(0.0f, std::min(1.0f, v));
+}
+
 static std::string escapeJson(const std::string& s) {
     std::ostringstream o;
     for (char c : s) {
@@ -156,11 +167,10 @@ static std::string unwrapArg(const std::string& req) {
 static void uiUpdateLoop() {
     using namespace std::chrono_literals;
     int tickCount = 0;
+    int s_lastTrackCount = 0;
     while (g_running.load(std::memory_order_relaxed)) {
         std::this_thread::sleep_for(30ms);
         if (!g_engine || !g_wv || !g_pageReady.load(std::memory_order_acquire)) {
-            if (tickCount % 100 == 0 && !g_pageReady.load(std::memory_order_relaxed))
-                log("DBG", "uiUpdateLoop: waiting for pageReady...");
             ++tickCount;
             continue;
         }
@@ -169,65 +179,81 @@ static void uiUpdateLoop() {
         int tc = g_engine->getTrackCount();
         bool playing = g_engine->isPlaying();
 
+        // Detect track count changes → force extended data
+        if (tc != s_lastTrackCount) {
+            s_lastTrackCount = tc;
+            g_uiDirty.fetch_or(kDirtyExtended, std::memory_order_release);
+        }
+
         auto* master = g_engine->getMaster();
+        uint32_t dirty = g_uiDirty.load(std::memory_order_acquire);
+        bool sendFull = (dirty & kDirtyExtended) != 0;
+        if (sendFull)
+            g_uiDirty.fetch_and(~kDirtyExtended, std::memory_order_release);
+
         std::ostringstream js;
-        // Compact array format: no property name strings, ~60% smaller than object
+        js.imbue(std::locale::classic());
         js << "updateUIFromNative(["
+           << (sendFull ? "1" : "0") << ","
            << (playing ? "1" : "0") << "," << ph << "," << tc << ","
-           << (master ? master->peakL.load(std::memory_order_relaxed) : 0.0f) << ","
-           << (master ? master->peakR.load(std::memory_order_relaxed) : 0.0f) << ","
-           << (master ? master->volume.load(std::memory_order_relaxed) : 1.0f);
-        // Track peaks
+           << safePeak(master ? master->peakL.load(std::memory_order_relaxed) : 0.0f) << ","
+           << safePeak(master ? master->peakR.load(std::memory_order_relaxed) : 0.0f) << ","
+           << safeFloat(master ? master->volume.load(std::memory_order_relaxed) : 1.0f, 1.0f);
+        // Track peaks (always sent)
         js << ",[";
         for (int i = 0; i < tc; ++i) {
             if (i > 0) js << ",";
-            js << std::max(g_engine->getTrack(i)->peakL.load(std::memory_order_relaxed),
-                           g_engine->getTrack(i)->peakR.load(std::memory_order_relaxed));
+            js << safePeak(std::max(g_engine->getTrack(i)->peakL.load(std::memory_order_relaxed),
+                           g_engine->getTrack(i)->peakR.load(std::memory_order_relaxed)));
         }
-        // Volumes
-        js << "],[";
-        for (int i = 0; i < tc; ++i) {
-            if (i > 0) js << ",";
-            js << g_engine->getTrack(i)->volume.load(std::memory_order_relaxed);
+        js << "]";
+
+        if (sendFull) {
+            // Volumes
+            js << ",[";
+            for (int i = 0; i < tc; ++i) {
+                if (i > 0) js << ",";
+                js << safeFloat(g_engine->getTrack(i)->volume.load(std::memory_order_relaxed), 1.0f);
+            }
+            // Mutes
+            js << "],[";
+            for (int i = 0; i < tc; ++i) {
+                if (i > 0) js << ",";
+                js << (g_engine->getTrack(i)->muted.load(std::memory_order_relaxed) ? "1" : "0");
+            }
+            // Solos
+            js << "],[";
+            for (int i = 0; i < tc; ++i) {
+                if (i > 0) js << ",";
+                js << (g_engine->getTrack(i)->soloed.load(std::memory_order_relaxed) ? "1" : "0");
+            }
+            // Arms
+            js << "],[";
+            for (int i = 0; i < tc; ++i) {
+                if (i > 0) js << ",";
+                js << (g_engine->getTrack(i)->armed.load(std::memory_order_relaxed) ? "1" : "0");
+            }
+            // Names
+            js << "],[";
+            for (int i = 0; i < tc; ++i) {
+                if (i > 0) js << ",";
+                js << "\"" << escapeJson(g_engine->getTrack(i)->name) << "\"";
+            }
+            // Audio frames
+            js << "],[";
+            for (int i = 0; i < tc; ++i) {
+                if (i > 0) js << ",";
+                AudioBuffer* buf = g_engine->getTrack(i)->audio.load(std::memory_order_relaxed);
+                js << (buf ? (int64_t)buf->frames : 0);
+            }
+            // Clip starts
+            js << "],[";
+            for (int i = 0; i < tc; ++i) {
+                if (i > 0) js << ",";
+                js << (int64_t)g_engine->getTrack(i)->clipStart.load(std::memory_order_relaxed);
+            }
         }
-        // Mutes
-        js << "],[";
-        for (int i = 0; i < tc; ++i) {
-            if (i > 0) js << ",";
-            js << (g_engine->getTrack(i)->muted.load(std::memory_order_relaxed) ? "1" : "0");
-        }
-        // Solos
-        js << "],[";
-        for (int i = 0; i < tc; ++i) {
-            if (i > 0) js << ",";
-            js << (g_engine->getTrack(i)->soloed.load(std::memory_order_relaxed) ? "1" : "0");
-        }
-        // Arms
-        js << "],[";
-        for (int i = 0; i < tc; ++i) {
-            if (i > 0) js << ",";
-            js << (g_engine->getTrack(i)->armed.load(std::memory_order_relaxed) ? "1" : "0");
-        }
-        // Track names
-        js << "],[";
-        for (int i = 0; i < tc; ++i) {
-            if (i > 0) js << ",";
-            js << "\"" << escapeJson(g_engine->getTrack(i)->name) << "\"";
-        }
-        // Audio frames
-        js << "],[";
-        for (int i = 0; i < tc; ++i) {
-            if (i > 0) js << ",";
-            AudioBuffer* buf = g_engine->getTrack(i)->audio.load(std::memory_order_relaxed);
-            js << (buf ? (int64_t)buf->frames : 0);
-        }
-        // Clip starts
-        js << "],[";
-        for (int i = 0; i < tc; ++i) {
-            if (i > 0) js << ",";
-            js << (int64_t)g_engine->getTrack(i)->clipStart.load(std::memory_order_relaxed);
-        }
-        js << "]])";
+        js << "])";
 
         g_wv->eval(js.str());
         ++tickCount;
@@ -245,7 +271,7 @@ static void uiUpdateLoop() {
         // Process pending flush requests from plugins (parameter sync)
         PluginChain::processPendingFlushes();
     }
-    log("DBG", "uiUpdateLoop: exiting");
+    
 }
 
 static std::string nativeLog(const std::string& req) {
@@ -292,6 +318,135 @@ static std::string nativeLog(const std::string& req) {
     return "null";
 }
 
+// ── NATIVE FILE DIALOGS (thread‑safe via main‑loop dispatch) ──
+struct DialogData {
+    std::string title;
+    std::string defaultName;
+    std::string extension;
+    bool isSave;
+    std::string result;
+    bool done = false;
+    std::mutex mtx;
+    std::condition_variable cv;
+};
+
+static gboolean runDialogOnMainThread(gpointer userData) {
+    auto* d = static_cast<DialogData*>(userData);
+    GtkWidget* win = gtk_window_new(GTK_WINDOW_TOPLEVEL);
+    GtkFileChooserAction action = d->isSave ? GTK_FILE_CHOOSER_ACTION_SAVE : GTK_FILE_CHOOSER_ACTION_OPEN;
+    const char* acceptLabel = d->isSave ? "_Save" : "_Open";
+    GtkFileChooserNative* dialog = gtk_file_chooser_native_new(
+        d->title.c_str(), GTK_WINDOW(win), action, acceptLabel, "_Cancel");
+    if (d->isSave && !d->defaultName.empty())
+        gtk_file_chooser_set_current_name(GTK_FILE_CHOOSER(dialog), d->defaultName.c_str());
+    if (!d->extension.empty()) {
+        GtkFileFilter* filter = gtk_file_filter_new();
+        std::string pat = "*." + d->extension;
+        gtk_file_filter_add_pattern(filter, pat.c_str());
+        gtk_file_filter_set_name(filter, (d->extension + " files").c_str());
+        gtk_file_chooser_add_filter(GTK_FILE_CHOOSER(dialog), filter);
+        if (!d->isSave) gtk_file_chooser_set_filter(GTK_FILE_CHOOSER(dialog), filter);
+    }
+    int res = gtk_native_dialog_run(GTK_NATIVE_DIALOG(dialog));
+    if (res == GTK_RESPONSE_ACCEPT) {
+        char* path = gtk_file_chooser_get_filename(GTK_FILE_CHOOSER(dialog));
+        if (path) {
+            d->result = path;
+            g_free(path);
+        }
+    }
+    g_object_unref(dialog);
+    gtk_widget_destroy(win);
+    std::lock_guard<std::mutex> lock(d->mtx);
+    d->done = true;
+    d->cv.notify_one();
+    return G_SOURCE_REMOVE;
+}
+
+static std::string nativeShowSaveDialog(const std::string& req) {
+    DialogData d;
+    d.isSave = true;
+    std::string a = unwrapArg(req);
+    auto p1 = a.find(',');
+    d.title = (p1 == std::string::npos) ? a : a.substr(0, p1);
+    if (p1 != std::string::npos) {
+        std::string rest = a.substr(p1 + 1);
+        auto p2 = rest.find(',');
+        d.defaultName = (p2 == std::string::npos) ? rest : rest.substr(0, p2);
+        if (p2 != std::string::npos) d.extension = rest.substr(p2 + 1);
+    }
+    // Insert extension hint into defaultName so the filter applies
+    if (!d.extension.empty() && d.defaultName.empty())
+        d.defaultName = "untitled." + d.extension;
+    g_main_context_invoke(nullptr, runDialogOnMainThread, &d);
+    {
+        std::unique_lock<std::mutex> lock(d.mtx);
+        d.cv.wait(lock, [&d]{ return d.done; });
+    }
+    return "\"" + escapeJson(d.result) + "\"";
+}
+
+static std::string nativeShowOpenDialog(const std::string& req) {
+    DialogData d;
+    d.isSave = false;
+    std::string a = unwrapArg(req);
+    auto p1 = a.find(',');
+    d.title = (p1 == std::string::npos) ? a : a.substr(0, p1);
+    if (p1 != std::string::npos) d.extension = a.substr(p1 + 1);
+    g_main_context_invoke(nullptr, runDialogOnMainThread, &d);
+    {
+        std::unique_lock<std::mutex> lock(d.mtx);
+        d.cv.wait(lock, [&d]{ return d.done; });
+    }
+    return "\"" + escapeJson(d.result) + "\"";
+}
+
+// ── PROJECT / EXPORT ──
+static std::string nativeSaveProject(const std::string& req) {
+    std::string path = unwrapArg(req);
+    bool ok = g_engine ? ProjectSerializer::save(path.c_str(), g_engine) : false;
+    log("SYS", "saveProject -> " + path + " " + (ok ? "OK" : "FAIL"));
+    return ok ? "\"OK\"" : "\"FAIL\"";
+}
+
+static std::string nativeLoadProject(const std::string& req) {
+    std::string path = unwrapArg(req);
+    bool ok = g_engine ? ProjectSerializer::load(path.c_str(), g_engine) : false;
+    log("SYS", "loadProject -> " + path + " " + (ok ? "OK" : "FAIL"));
+    g_uiDirty.fetch_or(kDirtyExtended, std::memory_order_release);
+    return ok ? "\"OK\"" : "\"FAIL\"";
+}
+
+static std::string nativeExportAudio(const std::string& req) {
+    std::string a = unwrapArg(req);
+    auto p1 = a.find(',');
+    if (p1 == std::string::npos || !g_engine) return "\"FAIL\"";
+    std::string wavPath = a.substr(0, p1);
+    auto p2 = a.find(',', p1 + 1);
+    int sampleRate = 48000;
+    int bitDepth = 16;
+    if (p2 != std::string::npos) {
+        sampleRate = safeStoi(a.substr(p1 + 1, p2 - p1 - 1), 48000);
+        bitDepth = safeStoi(a.substr(p2 + 1), 16);
+    } else {
+        sampleRate = safeStoi(a.substr(p1 + 1), 48000);
+    }
+    log("EXPORT", "start async path=" + wavPath + " sr=" + std::to_string(sampleRate) + " bd=" + std::to_string(bitDepth));
+
+    // Launch export on a worker thread so the web process doesn't hang
+    std::thread t([wavPath, sampleRate, bitDepth]() {
+        bool ok = g_engine ? g_engine->renderOffline(wavPath.c_str(), sampleRate, bitDepth) : false;
+        log("EXPORT", std::string("done ") + (ok ? "OK" : "FAIL"));
+        // Notify JS from the worker thread (eval posts to main loop internally)
+        if (g_wv && g_running.load(std::memory_order_acquire)) {
+            g_wv->eval(("window.onExportDone && window.onExportDone(" +
+                        std::string(ok ? "'OK'" : "'FAIL'") + ")").c_str());
+        }
+    });
+    t.detach();
+    return "\"PENDING\"";
+}
+
 static std::string nativePlay(const std::string&) {
     log("AUDIO", "play");
     if (g_engine) g_engine->play();
@@ -322,6 +477,7 @@ static std::string nativeAddTrack(const std::string&) {
     if (g_engine) {
         int n = g_engine->addTrack();
         log("TRACK", "addTrack -> " + std::to_string(n));
+        g_uiDirty.fetch_or(kDirtyExtended, std::memory_order_release);
         return std::to_string(n);
     }
     log("TRACK", "addTrack failed: no engine");
@@ -333,6 +489,7 @@ static std::string nativeRemoveTrack(const std::string& req) {
     int idx = safeStoi(a, -1);
     log("TRACK", "removeTrack idx=" + std::to_string(idx));
     if (idx >= 0 && g_engine) g_engine->removeTrack(idx);
+    g_uiDirty.fetch_or(kDirtyExtended, std::memory_order_release);
     return "null";
 }
 
@@ -347,6 +504,7 @@ static std::string nativeSetVolume(const std::string& req) {
         t->volume.store(val, std::memory_order_relaxed);
         log("MIX", "setVolume track=" + std::to_string(idx) + " val=" + std::to_string(val));
     }
+    g_uiDirty.fetch_or(kDirtyExtended, std::memory_order_release);
     return "null";
 }
 
@@ -359,6 +517,7 @@ static std::string nativeSetMasterVolume(const std::string& req) {
             log("MIX", "setMasterVolume val=" + std::to_string(val));
         }
     }
+    g_uiDirty.fetch_or(kDirtyExtended, std::memory_order_release);
     return "null";
 }
 
@@ -370,6 +529,7 @@ static std::string nativeSetClipStart(const std::string& req) {
     uint64_t clipStart = (uint64_t)std::max(0, safeStoi(a.substr(pos + 1)));
     g_engine->setClipStart(idx, clipStart);
     log("TIMELINE", "setClipStart track=" + std::to_string(idx) + " pos=" + std::to_string(clipStart));
+    g_uiDirty.fetch_or(kDirtyExtended, std::memory_order_release);
     return "null";
 }
 
@@ -389,6 +549,7 @@ static std::string nativeMoveClip(const std::string& req) {
         g_engine->setClipStart(dst, clipStart);
     }
     log("TIMELINE", "moveClip src=" + std::to_string(src) + " dst=" + std::to_string(dst) + " pos=" + std::to_string(clipStart));
+    g_uiDirty.fetch_or(kDirtyExtended, std::memory_order_release);
     return "null";
 }
 
@@ -417,6 +578,7 @@ static std::string nativeSetMute(const std::string& req) {
         t->muted.store(val, std::memory_order_relaxed);
         log("MIX", "setMute track=" + std::to_string(idx) + " val=" + (val ? "true" : "false"));
     }
+    g_uiDirty.fetch_or(kDirtyExtended, std::memory_order_release);
     return "null";
 }
 
@@ -431,6 +593,7 @@ static std::string nativeSetSolo(const std::string& req) {
         t->soloed.store(val, std::memory_order_relaxed);
         log("MIX", "setSolo track=" + std::to_string(idx) + " val=" + (val ? "true" : "false"));
     }
+    g_uiDirty.fetch_or(kDirtyExtended, std::memory_order_release);
     return "null";
 }
 
@@ -445,6 +608,7 @@ static std::string nativeSetArm(const std::string& req) {
         t->armed.store(val, std::memory_order_relaxed);
         log("MIX", "setArm track=" + std::to_string(idx) + " val=" + (val ? "true" : "false"));
     }
+    g_uiDirty.fetch_or(kDirtyExtended, std::memory_order_release);
     return "null";
 }
 
@@ -465,16 +629,10 @@ static std::string nativeLoadWav(const std::string& req) {
     bool ok = g_engine->loadWavToTrack(idx, path.c_str());
     if (ok) {
         log("WAV", "loadWav OK track=" + std::to_string(idx));
-        // Diagnostic: verify peak cache was generated
-        AudioBuffer* dbg = g_engine->getTrack(idx)->audio.load();
-        log("WAV", std::string("peak diag: buf=") + (dbg ? "yes" : "no") +
-            " frames=" + (dbg ? std::to_string(dbg->frames) : "0") +
-            " peaks=" + (dbg ? std::to_string(dbg->peakCache.size()) : "0") +
-            " empty=" + (dbg ? (dbg->peakCache.empty() ? "yes" : "no") : "n/a") +
-            " pk0=" + (dbg && !dbg->peakCache.empty() ? std::to_string(dbg->peakCache[0]) : "n/a"));
     } else {
         log("WAV", "loadWav FAILED");
     }
+    g_uiDirty.fetch_or(kDirtyExtended, std::memory_order_release);
     return ok ? "true" : "false";
 }
 
@@ -487,9 +645,7 @@ static std::string nativeGetPeakCache(const std::string& req) {
         log("WAV", "getPeakCache idx=" + std::to_string(idx) + " no buffer or zero frames");
         return "[]";
     }
-    // Generate peaks on-demand if they weren't built during load
     if (buf->peakCache.empty()) {
-        log("WAV", "getPeakCache idx=" + std::to_string(idx) + " generating peaks on-demand (frames=" + std::to_string(buf->frames) + ")");
         int numP = std::max(100, (int)(buf->frames / 600));
         buf->peakCache.resize(numP);
         for (int p = 0; p < numP; ++p) {
@@ -506,13 +662,13 @@ static std::string nativeGetPeakCache(const std::string& req) {
         }
     }
     std::ostringstream js;
+    js.imbue(std::locale::classic());
     js << "[";
     for (size_t i = 0; i < buf->peakCache.size(); ++i) {
         if (i > 0) js << ",";
-        js << buf->peakCache[i];
+        js << safePeak(buf->peakCache[i]);
     }
     js << "]";
-    log("WAV", "getPeakCache idx=" + std::to_string(idx) + " returning " + std::to_string(buf->peakCache.size()) + " peaks, first=" + std::to_string(buf->peakCache[0]));
     return js.str();
 }
 
@@ -541,13 +697,11 @@ static std::string nativeListDir(const std::string& req) {
         log("DIR", "listDir exception: " + std::string(e.what()));
     }
     js << "]";
-    log("DIR", "listDir '" + a + "' -> " + std::to_string(count) + " entries");
     return js.str();
 }
 
 static std::string nativeGetCwd(const std::string&) {
     std::string cwd = std::filesystem::current_path().string();
-    log("DIR", "getCwd -> " + cwd);
     return "\"" + escapeJson(cwd) + "\"";
 }
 
@@ -597,6 +751,7 @@ static std::string nativePluginBypass(const std::string& req) {
         log("PLUGIN", "bypass track=" + std::to_string(trackIdx) +
             " plugin=" + std::to_string(pluginIdx) + " bp=" + (bp ? "1" : "0"));
     }
+    g_uiDirty.fetch_or(kDirtyExtended, std::memory_order_release);
     return "null";
 }
 
@@ -627,6 +782,7 @@ static std::string nativePluginRemove(const std::string& req) {
         log("PLUGIN", "remove track=" + std::to_string(trackIdx) +
             " plugin=" + std::to_string(pluginIdx));
     }
+    g_uiDirty.fetch_or(kDirtyExtended, std::memory_order_release);
     return "null";
 }
 
@@ -645,7 +801,7 @@ static std::string nativePluginLoad(const std::string& req) {
     if (!chain) return "false";
     bool ok = chain->addPlugin(libPath.c_str(), pluginId.c_str());
     log("PLUGIN", "load -> " + std::string(ok ? "OK" : "FAIL"));
-    log("PLUGIN", "load -> " + std::string(ok ? "OK" : "FAIL"));
+    g_uiDirty.fetch_or(kDirtyExtended, std::memory_order_release);
     return ok ? "true" : "false";
 }
 
@@ -683,7 +839,6 @@ static std::string nativeScanClap(const std::string& req) {
         }
     }
     js << "]";
-    log("PLUGIN", "scanClap done");
     return js.str();
 }
 
@@ -725,7 +880,20 @@ static std::string nativePluginShowGUI(const std::string& req) {
     if (p == std::string::npos || !g_engine) return "false";
     int trackIdx = safeStoi(a.substr(0, p));
     int pluginIdx = safeStoi(a.substr(p + 1));
-    if (findPluginGui(trackIdx, pluginIdx)) return "true";
+    if (findPluginGui(trackIdx, pluginIdx)) {
+        // Already open — close it (toggle off)
+        auto* gs = findPluginGui(trackIdx, pluginIdx);
+        if (gs->plugin && gs->gui->hide) gs->gui->hide(gs->plugin);
+        if (gs->plugin && gs->gui->destroy) gs->gui->destroy(gs->plugin);
+        if (gs->window) gtk_widget_destroy(gs->window);
+        for (size_t i = 0; i < g_pluginGuis.size(); ++i) {
+            if (g_pluginGuis[i].trackIdx == trackIdx && g_pluginGuis[i].pluginIdx == pluginIdx) {
+                g_pluginGuis.erase(g_pluginGuis.begin() + i); break;
+            }
+        }
+        log("PLUGIN", "GUI closed track " + std::to_string(trackIdx) + " plugin " + std::to_string(pluginIdx));
+        return "null";
+    }
 
     PluginChain* chain = g_engine->getPluginChain(trackIdx);
     if (!chain) return "false";
@@ -834,7 +1002,6 @@ static gboolean onDecidePolicy(WebKitWebView* webview, WebKitPolicyDecision* dec
     auto* request = webkit_navigation_action_get_request(action);
     const char* uri = webkit_uri_request_get_uri(request);
     if (!uri) return FALSE;
-    log("DND", "decide-policy NAVIGATION for URI: " + std::string(uri));
     std::string suri(uri);
     // Only intercept file:// URIs with audio extensions
     if (suri.find("file://") != 0) return FALSE;
@@ -867,7 +1034,6 @@ static gboolean onDecidePolicy(WebKitWebView* webview, WebKitPolicyDecision* dec
         }
         decoded += path[i];
     }
-    log("DND", "Native drop intercepted: " + decoded);
     auto* wv = static_cast<webview::webview*>(user_data);
     std::string escaped = escapeJson(decoded);
     g_lastDropUri = decoded;
@@ -911,11 +1077,8 @@ static void onDragDataReceived(GtkWidget* widget, GdkDragContext* context,
         }
         decoded += path[i];
     }
-    log("DND", "drag-data-received intercepted: " + decoded);
-    // Skip if onDecidePolicy already processed this drop
     gint64 now = g_get_monotonic_time();
     if (decoded == g_lastDropUri && (now - g_lastDropTime) < 5000000) {
-        log("DND", "Skipping duplicate from drag-data-received");
         return;
     }
     auto* wv = static_cast<webview::webview*>(user_data);
@@ -1000,8 +1163,13 @@ int main() {
     w.bind("nativePluginHideGUI", nativePluginHideGUI);
     w.bind("nativePageReady", nativePageReady);
     w.bind("nativeLog", nativeLog);  // JS→C++ log relay
+    w.bind("nativeShowSaveDialog", nativeShowSaveDialog);
+    w.bind("nativeShowOpenDialog", nativeShowOpenDialog);
+    w.bind("nativeSaveProject", nativeSaveProject);
+    w.bind("nativeLoadProject", nativeLoadProject);
+    w.bind("nativeExportAudio", nativeExportAudio);
 
-    log("SYS", "All 26 native bindings registered");
+    log("SYS", "All 31 native bindings registered");
 
     w.init(
         "window.updateUIFromNative=function(){};"

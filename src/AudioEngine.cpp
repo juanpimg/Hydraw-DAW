@@ -374,3 +374,115 @@ void AudioEngine::audioCallback(ma_device* pDevice, void* pOutput, const void* p
             engine->m_transport.playing.store(false, std::memory_order_release);
     }
 }
+
+#include "Export/WavWriter.h"
+
+void AudioEngine::setTrackAudioPath(int index, const char* path) {
+    if (index >= 0 && index < MAX_TRACKS)
+        m_tracks[index].audioFilePath = path ? path : "";
+}
+
+std::string AudioEngine::getTrackAudioPath(int index) {
+    if (index >= 0 && index < MAX_TRACKS)
+        return m_tracks[index].audioFilePath;
+    return "";
+}
+
+bool AudioEngine::renderOffline(const char* wavPath, int sampleRate, int bitDepth) {
+    int tc = m_trackCount.load(std::memory_order_relaxed);
+
+    // Calculate total duration: max(clipStart + audioFrames) across all tracks
+    uint64_t totalFrames = 0;
+    bool anyAudio = false;
+    for (int t = 0; t < tc; ++t) {
+        AudioBuffer* buf = m_tracks[t].audio.load(std::memory_order_acquire);
+        if (buf && buf->frames > 0) {
+            anyAudio = true;
+            uint64_t end = m_tracks[t].clipStart.load(std::memory_order_relaxed) + buf->frames;
+            if (end > totalFrames) totalFrames = end;
+        }
+    }
+    if (!anyAudio || totalFrames == 0) return false;
+
+    // Allocate output buffer (stereo interleaved float)
+    std::vector<float> outBuffer(totalFrames * 2, 0.0f);
+
+    uint64_t playhead = 0;
+    while (playhead < totalFrames) {
+        uint64_t remaining = totalFrames - playhead;
+        uint32_t block = (uint32_t)std::min<uint64_t>(remaining, BLOCK_SIZE);
+        float* out = outBuffer.data() + playhead * 2;
+
+        for (int t = 0; t < tc; ++t) {
+            Track& track = m_tracks[t];
+            if (track.muted.load(std::memory_order_relaxed)) continue;
+
+            float blockL[BLOCK_SIZE], blockR[BLOCK_SIZE];
+            bool hasAudio = false;
+
+            AudioBuffer* buf = track.audio.load(std::memory_order_acquire);
+            uint64_t cs = track.clipStart.load(std::memory_order_relaxed);
+            if (buf && playhead >= cs) {
+                uint64_t offset = playhead - cs;
+                if (offset < buf->frames) {
+                    uint32_t copyFrames = block;
+                    if (offset + copyFrames > buf->frames)
+                        copyFrames = (uint32_t)(buf->frames - offset);
+                    std::memcpy(blockL, &buf->dataL[offset], copyFrames * sizeof(float));
+                    std::memcpy(blockR, &buf->dataR[offset], copyFrames * sizeof(float));
+                    hasAudio = true;
+                    if (copyFrames < block) {
+                        std::memset(blockL + copyFrames, 0, (block - copyFrames) * sizeof(float));
+                        std::memset(blockR + copyFrames, 0, (block - copyFrames) * sizeof(float));
+                    }
+                } else {
+                    std::memset(blockL, 0, sizeof(float) * BLOCK_SIZE);
+                    std::memset(blockR, 0, sizeof(float) * BLOCK_SIZE);
+                }
+            } else {
+                std::memset(blockL, 0, sizeof(float) * BLOCK_SIZE);
+                std::memset(blockR, 0, sizeof(float) * BLOCK_SIZE);
+            }
+
+            // Process plugins
+            auto& chain = m_pluginChains[t];
+            if (chain && chain->getPluginCount() > 0 && hasAudio) {
+                float planar[BLOCK_SIZE * 2];
+                for (uint32_t f = 0; f < block; ++f) {
+                    planar[f] = blockL[f];
+                    planar[f + block] = blockR[f];
+                }
+                chain->process(planar, planar, (int)block, 2);
+                for (uint32_t f = 0; f < block; ++f) {
+                    blockL[f] = planar[f];
+                    blockR[f] = planar[f + block];
+                }
+            }
+
+            float vol = track.volume.load(std::memory_order_relaxed);
+            float panVal = track.pan.load(std::memory_order_relaxed);
+            double leftGain = std::min(1.0, 1.0 - panVal) * vol;
+            double rightGain = std::min(1.0, 1.0 + panVal) * vol;
+
+            for (uint32_t f = 0; f < block; ++f) {
+                out[f * 2 + 0] += (float)(blockL[f] * leftGain);
+                out[f * 2 + 1] += (float)(blockR[f] * rightGain);
+            }
+        }
+
+        // Master volume
+        float masterVol = m_master.volume.load(std::memory_order_relaxed);
+        if (masterVol != 1.0f) {
+            for (uint32_t f = 0; f < block * 2; ++f)
+                out[f] *= masterVol;
+        }
+
+        playhead += block;
+    }
+
+    // Write WAV
+    if (bitDepth == 32)
+        return WavWriter::writeFloat32(wavPath, outBuffer.data(), totalFrames, 2, sampleRate);
+    else
+        return WavWriter::write16bit(wavPath, outBuffer.data(), totalFrames, 2, sampleRate);
+}

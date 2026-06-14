@@ -36,6 +36,7 @@ add_executable(hydraw_daw
     src/main.cpp
     src/AudioEngine.cpp
     src/Plugin/PluginChain.cpp
+    src/Project/ProjectSerializer.cpp
 )
 
 target_compile_definitions(hydraw_daw PRIVATE HYDRAW_VERSION="${PROJECT_VERSION}")

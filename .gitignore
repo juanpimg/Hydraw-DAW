@@ -19,3 +19,9 @@ hydraw_*.log
 *.wma
 *.opus
 *.aiff
+
+# opencode
+.agents/
+package-lock.json
+package.json
+skills-lock.json
