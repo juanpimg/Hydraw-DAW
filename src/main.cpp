@@ -525,25 +525,34 @@ static std::string nativeListDir(const std::string& req) {
     js << "[";
     bool first = true;
     int count = 0;
-    std::error_code ec;
-    auto it = std::filesystem::directory_iterator(a, ec);
-    if (ec) {
-        log("DIR", "listDir error for '" + a + "': " + ec.message());
-    js << "]";
-    return js.str();
-    }
-    for (auto& entry : it) {
-        if (!first) js << ",";
-        first = false;
-        ++count;
-        bool isDir = entry.is_directory();
-        std::string name = entry.path().filename().string();
-        std::string ext = entry.path().extension().string();
-        js << "{"
-           << "\"name\":\"" << escapeJson(name) << "\","
-           << "\"dir\":" << (isDir ? "true" : "false") << ","
-           << "\"ext\":\"" << escapeJson(ext) << "\""
-           << "}";
+    try {
+        std::error_code ec;
+        auto it = std::filesystem::directory_iterator(a, ec);
+        if (ec) {
+            log("DIR", "listDir error for '" + a + "': " + ec.message());
+            // Relay error to JS console
+            std::string errjs = "log('ERROR','DIR','listDir: " + escapeJson(ec.message()) + " for " + escapeJson(a) + "')";
+            if (g_wv) g_wv->eval(errjs);
+            js << "]";
+            return js.str();
+        }
+        for (auto& entry : it) {
+            if (!first) js << ",";
+            first = false;
+            ++count;
+            bool isDir = entry.is_directory();
+            std::string name = entry.path().filename().string();
+            std::string ext = entry.path().extension().string();
+            js << "{"
+               << "\"name\":\"" << escapeJson(name) << "\","
+               << "\"dir\":" << (isDir ? "true" : "false") << ","
+               << "\"ext\":\"" << escapeJson(ext) << "\""
+               << "}";
+        }
+    } catch (std::exception& e) {
+        log("DIR", "listDir exception for '" + a + "': " + e.what());
+        std::string errjs = "log('ERROR','DIR','listDir exception: " + escapeJson(e.what()) + "')";
+        if (g_wv) g_wv->eval(errjs);
     }
     js << "]";
     log("DIR", "listDir '" + a + "' -> " + std::to_string(count) + " entries");
