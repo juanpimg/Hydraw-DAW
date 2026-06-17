@@ -542,9 +542,31 @@ static std::string nativeSaveProject(const std::string& req) {
 
 static std::string nativeLoadProject(const std::string& req) {
     std::string path = unwrapArg(req);
-    bool ok = g_engine ? ProjectSerializer::load(path.c_str(), g_engine) : false;
-    log("SYS", "loadProject -> " + path + " " + (ok ? "OK" : "FAIL"));
-    g_uiDirty.fetch_or(kDirtyExtended, std::memory_order_release);
+    if (!g_engine) return "\"FAIL\"";
+
+    // Hydration sync order:
+    //   1. Stop audio engine (no more callbacks)
+    //   2. Drain any remaining deferred deletes (safe with audio thread stopped)
+    //   3. Load project file → rebuild C++ state
+    //   4. Flag UI for full refresh
+    //   5. Restart audio engine
+
+    log("SYS", "loadProject: stopping audio engine...");
+    g_engine->stop();
+    PluginChain::drainPendingDeletes();
+    g_engine->drainPendingAudioBufferDeletes();
+
+    log("SYS", "loadProject: loading " + path);
+    bool ok = ProjectSerializer::load(path.c_str(), g_engine);
+
+    if (ok) {
+        log("SYS", "loadProject: OK, restarting audio engine");
+        g_uiDirty.fetch_or(kDirtyExtended, std::memory_order_release);
+    } else {
+        log("SYS", "loadProject: FAILED, restarting audio engine with current state");
+    }
+
+    g_engine->start();
     return ok ? "\"OK\"" : "\"FAIL\"";
 }
 

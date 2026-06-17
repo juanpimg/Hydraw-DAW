@@ -84,9 +84,12 @@ static float extractFloat(const std::string& json, const std::string& key) {
     if (pos == std::string::npos) return 0.0f;
     pos += search.size();
     while (pos < json.size() && (json[pos] == ' ' || json[pos] == '\t' || json[pos] == '\n')) ++pos;
-    size_t end;
-    float val = std::stof(json.c_str() + pos, &end);
-    return val;
+    try {
+        size_t end;
+        return std::stof(json.c_str() + pos, &end);
+    } catch (...) {
+        return 0.0f;
+    }
 }
 
 static bool extractBool(const std::string& json, const std::string& key) {
@@ -231,11 +234,22 @@ bool ProjectSerializer::save(const char* path, AudioEngine* engine) {
     json << "  ]\n";
     json << "}\n";
 
-    FILE* f = fopen(path, "w");
+    // Atomic write: write to .tmp then rename. Prevents project corruption
+    // if the app crashes or loses power mid-write.
+    std::string tmpPath = std::string(path) + ".tmp";
+    FILE* f = fopen(tmpPath.c_str(), "w");
     if (!f) return false;
     std::string out = json.str();
-    fwrite(out.data(), 1, out.size(), f);
+    bool writeOk = fwrite(out.data(), 1, out.size(), f) == out.size();
     fclose(f);
+    if (!writeOk) {
+        std::remove(tmpPath.c_str());
+        return false;
+    }
+    if (std::rename(tmpPath.c_str(), path) != 0) {
+        std::remove(tmpPath.c_str());
+        return false;
+    }
     return true;
 }
 
@@ -263,11 +277,12 @@ bool ProjectSerializer::load(const char* path, AudioEngine* engine) {
         engine->removeTrack(i);
     // Track 0 remains, we'll configure it
 
-    // Get rid of track 0 audio
+    // Get rid of track 0 audio using deferred delete (safe against
+    // audio thread holding a local copy from the last block).
     {
         Track* t0 = engine->getTrack(0);
         AudioBuffer* old = t0->audio.exchange(nullptr, std::memory_order_release);
-        if (old) delete old;
+        if (old) engine->queueAudioBufferDelete(old);
         t0->name = "";
         t0->audioFilePath = "";
         t0->volume.store(1.0f, std::memory_order_relaxed);
@@ -278,56 +293,52 @@ bool ProjectSerializer::load(const char* path, AudioEngine* engine) {
         t0->clipStart.store(0, std::memory_order_relaxed);
     }
 
-    // Restore master chain BEFORE tracks (so the audio thread sees the
-    // master changes first). NOTE: we APPEND to the existing master
-    // chain rather than replace it. This means if the init() preload
-    // already added PeakEater, and the project also defines master
-    // plugins, BOTH will end up in the master chain. The user can
-    // bypass/remove duplicates from the FX UI. Replacing the master
-    // chain cleanly is a separate refactor (shared_ptr Snapshot
-    // ownership) — left for a follow-up.
+    // Restore master chain BEFORE tracks. First, remove ALL existing
+    // master plugins (e.g. the preloaded PeakEater from init()), then
+    // add the plugins saved in the project file. This prevents the old
+    // append-bug that duplicated plugins on every save→load cycle.
     {
-        std::string mPluginsArr = extractArray(json, "master");
-        // The master object is not an array, so extractArray returns "".
-        // We need a tiny inline parser: find "master": { ... } and pull
-        // out the "plugins" sub-array.
-        if (mPluginsArr.empty()) {
-            std::string masterKey = "\"master\":";
-            auto mp = json.find(masterKey);
-            if (mp != std::string::npos) {
-                auto brace = json.find('{', mp + masterKey.size());
-                if (brace != std::string::npos) {
-                    int depth = 1;
-                    size_t start = brace;
-                    size_t end = brace + 1;
-                    while (end < json.size() && depth > 0) {
-                        if (json[end] == '{') ++depth;
-                        else if (json[end] == '}') --depth;
-                        else if (json[end] == '"') {
-                            ++end;
-                            while (end < json.size() && !(json[end] == '"' && json[end-1] != '\\')) ++end;
-                        }
+        PluginChain* mchain = engine->getPluginChain(-1);
+        if (mchain) {
+            while (mchain->getPluginCount() > 0)
+                mchain->removePlugin(0);
+        }
+        // Parse the "master" object and its "plugins" array
+        std::string masterKey = "\"master\":";
+        auto mp = json.find(masterKey);
+        if (mp != std::string::npos) {
+            auto brace = json.find('{', mp + masterKey.size());
+            if (brace != std::string::npos) {
+                int depth = 1;
+                size_t end = brace + 1;
+                while (end < json.size() && depth > 0) {
+                    if (json[end] == '{') ++depth;
+                    else if (json[end] == '}') --depth;
+                    else if (json[end] == '"') {
                         ++end;
+                        while (end < json.size() && !(json[end] == '"' && json[end-1] != '\\')) ++end;
                     }
-                    std::string masterObj = json.substr(start, end - start);
-                    std::string mpArr = extractArray(masterObj, "plugins");
-                    if (!mpArr.empty()) {
-                        auto pluginObjects = splitObjects(mpArr);
-                        PluginChain* mchain = engine->getPluginChain(-1);
-                        if (mchain) {
-                            int baseIdx = mchain->getPluginCount();
-                            for (size_t p = 0; p < pluginObjects.size(); ++p) {
-                                std::string plPath = extractString(pluginObjects[p], "path");
-                                std::string plId = extractString(pluginObjects[p], "id");
-                                bool bypassed = extractBool(pluginObjects[p], "bypassed");
-                                std::string plState = extractString(pluginObjects[p], "state");
-                                if (!plPath.empty() && !plId.empty()) {
-                                    bool ok = mchain->addPlugin(plPath.c_str(), plId.c_str());
-                                    if (ok) {
-                                        if (bypassed) mchain->setBypass((int)baseIdx, true);
-                                        if (!plState.empty()) mchain->loadState((int)baseIdx, plState);
-                                        ++baseIdx;
-                                    }
+                    ++end;
+                }
+                std::string masterObj = json.substr(brace, end - brace);
+                std::string mpArr = extractArray(masterObj, "plugins");
+                if (!mpArr.empty()) {
+                    auto pluginObjects = splitObjects(mpArr);
+                    if (mchain) {
+                        for (size_t p = 0; p < pluginObjects.size(); ++p) {
+                            std::string plPath = extractString(pluginObjects[p], "path");
+                            std::string plId = extractString(pluginObjects[p], "id");
+                            bool bypassed = extractBool(pluginObjects[p], "bypassed");
+                            std::string plState = extractString(pluginObjects[p], "state");
+                            if (!plPath.empty() && !plId.empty()) {
+                                bool ok = mchain->addPlugin(plPath.c_str(), plId.c_str());
+                                if (ok) {
+                                    int idx = mchain->getPluginCount() - 1;
+                                    if (bypassed) mchain->setBypass(idx, true);
+                                    if (!plState.empty()) mchain->loadState(idx, plState);
+                                } else {
+                                    fprintf(stderr, "[LOAD] WARN: failed to restore master plugin %s (%s)\n",
+                                            plPath.c_str(), plId.c_str());
                                 }
                             }
                         }
@@ -357,9 +368,15 @@ bool ProjectSerializer::load(const char* path, AudioEngine* engine) {
         t->armed.store(extractBool(obj, "armed"), std::memory_order_relaxed);
         t->clipStart.store((uint64_t)std::max(0, extractInt(obj, "clipStart")), std::memory_order_relaxed);
 
-        // Reload audio if path exists
+        // Reload audio if path exists. If the file has been moved or
+        // deleted since the project was saved, the track stays silent
+        // (no crash) and we log a warning.
         if (!t->audioFilePath.empty()) {
-            engine->loadWavToTrack(i, t->audioFilePath.c_str());
+            bool loaded = engine->loadWavToTrack(i, t->audioFilePath.c_str());
+            if (!loaded) {
+                fprintf(stderr, "[LOAD] WARN: audio file not found: %s (track %d will be silent)\n",
+                        t->audioFilePath.c_str(), i);
+            }
         }
 
         // Restore plugin chain
@@ -379,6 +396,9 @@ bool ProjectSerializer::load(const char* path, AudioEngine* engine) {
                         if (bypassed) chain->setBypass(baseIdx, true);
                         if (!plState.empty()) chain->loadState(baseIdx, plState);
                         ++baseIdx;
+                    } else {
+                        fprintf(stderr, "[LOAD] WARN: failed to restore plugin %s (%s) on track %d\n",
+                                plPath.c_str(), plId.c_str(), i);
                     }
                 }
             }
