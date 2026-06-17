@@ -41,12 +41,20 @@ static std::string unescapeJson(const std::string& s) {
     return r;
 }
 
-// Simple JSON string value extraction: finds "key": "value" pattern
+// Simple JSON string value extraction: finds "key": then reads the
+// quoted string after any whitespace. Supports "key":"value" (no space)
+// and "key": "value" (with space) — the save() function always writes
+// the latter but being lenient avoids silent data loss if the JSON is
+// ever re-prettified with different spacing.
 static std::string extractString(const std::string& json, const std::string& key) {
-    std::string search = "\"" + key + "\":\"";
+    std::string search = "\"" + key + "\":";
     auto pos = json.find(search);
     if (pos == std::string::npos) return "";
     pos += search.size();
+    // skip whitespace between colon and opening quote
+    while (pos < json.size() && (json[pos] == ' ' || json[pos] == '\t' || json[pos] == '\n')) ++pos;
+    if (pos >= json.size() || json[pos] != '"') return "";
+    ++pos;
     std::string val;
     for (; pos < json.size(); ++pos) {
         if (json[pos] == '"') break;
