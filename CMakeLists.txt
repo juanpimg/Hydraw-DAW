@@ -32,35 +32,55 @@ set(WEBVIEW_BUILD_STATIC_LIBRARY OFF CACHE BOOL "" FORCE)
 set(WEBVIEW_ENABLE_CHECKS OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(webview)
 
-add_executable(hydraw_daw
-    src/main.cpp
+FetchContent_Declare(
+    nlohmann_json
+    GIT_REPOSITORY https://github.com/nlohmann/json
+    GIT_TAG v3.11.3
+)
+set(JSON_BuildTests OFF CACHE INTERNAL "")
+set(JSON_Install OFF CACHE INTERNAL "")
+FetchContent_MakeAvailable(nlohmann_json)
+
+# ── hydraw_core: the pure audio engine (static library) ──
+# NO WebKit, GTK, GL, or X11 dependencies. Can be linked from
+# any host (mobile, headless tests, future macOS bridge, etc.).
+add_library(hydraw_core STATIC
     src/AudioEngine.cpp
     src/Plugin/PluginChain.cpp
     src/Project/ProjectSerializer.cpp
 )
-
-target_compile_definitions(hydraw_daw PRIVATE HYDRAW_VERSION="${PROJECT_VERSION}")
-
-target_include_directories(hydraw_daw PRIVATE
+target_include_directories(hydraw_core PUBLIC
     ${CMAKE_SOURCE_DIR}/src
     ${CMAKE_SOURCE_DIR}/extern
     ${CMAKE_SOURCE_DIR}/extern/clap
 )
+set_source_files_properties(src/AudioEngine.cpp
+    PROPERTIES COMPILE_DEFINITIONS MINIAUDIO_IMPLEMENTATION)
+target_compile_definitions(hydraw_core PRIVATE HYDRAW_VERSION="${PROJECT_VERSION}")
+target_link_libraries(hydraw_core PUBLIC
+    pthread
+    dl
+    nlohmann_json::nlohmann_json
+)
+if(UNIX AND NOT APPLE)
+    target_link_libraries(hydraw_core PUBLIC asound)
+endif()
 
-set_source_files_properties(src/AudioEngine.cpp PROPERTIES COMPILE_DEFINITIONS MINIAUDIO_IMPLEMENTATION)
-
+# ── hydraw_daw: the WebKit/GTK bridge (executable) ──
+add_executable(hydraw_daw
+    src/main.cpp
+)
+target_compile_definitions(hydraw_daw PRIVATE HYDRAW_VERSION="${PROJECT_VERSION}")
 target_link_libraries(hydraw_daw PRIVATE
+    hydraw_core
     webview::core
+    GL
+    X11
+    asound
     pthread
     dl
     rt
-    GL
-    X11
 )
-
-if(UNIX AND NOT APPLE)
-    target_link_libraries(hydraw_daw PRIVATE asound)
-endif()
 
 # Ship bundled CLAP plugins next to the binary so the audio engine can
 # preload them via a relative path. The runtime expects "plugins/<x>.clap"

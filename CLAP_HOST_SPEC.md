@@ -5,16 +5,16 @@
 
 ## 1. Hallazgos verificados contra spec
 
-| # | Hallazgo | Spec referenciada | Severidad |
-|---|----------|-------------------|-----------|
-| H1 | `PluginChain::process` usa `try_lock` y silencia audio si el lock está ocupado | `clap/plugin.h:process` [audio-thread] | **CRÍTICO** — timeline se queda pillado |
-| H2 | `clap_host_request_resize` llama `gtk_window_resize` desde cualquier hilo | `clap/ext/gui.h:request_resize` thread-safe | **ALTO** — segfault con plugins JUCE/PeakEater |
-| H3 | No se ofrece `clap.thread-check` | `clap/ext/thread-check.h` "highly recommended" | **ALTO** — plugins que asumen el check fallan |
-| H4 | No se sigue el orden oficial de GUI (saltan `can_resize`/`adjust_size`) | `clap/ext/gui.h` doc pág GUI | **MEDIO** |
-| H5 | `gui->closed` callback hace no-op, ignora `was_destroyed` | `clap/ext/gui.h:closed` thread-safe | **MEDIO** |
-| H6 | `clap_host_log` callback es vacío | `clap/ext/log.h` | **MEDIO** — cero diagnóstica |
-| H7 | `nativeScanClap` carga + cierra .clap en el main thread sin sandbox | práctica estándar | **MEDIO** — un plugin roto mata el DAW |
-| H8 | `nativePluginLoad` hace `init` + `activate` síncronamente en main thread | `clap/plugin.h:init` [main-thread] | **BAJO** — congela la UI si el plugin es lento |
+| # | Hallazgo | Spec referenciada | Severidad | Estado |
+|---|----------|-------------------|-----------|--------|
+| H1 | `PluginChain::process` usa `try_lock` y silencia audio si el lock está ocupado | `clap/plugin.h:process` [audio-thread] | **CRÍTICO** | ✅ Resuelto — modelo snapshot lock-free con `std::atomic<Snapshot*>` |
+| H2 | `clap_host_request_resize` llama `gtk_window_resize` desde cualquier hilo | `clap/ext/gui.h:request_resize` thread-safe | **ALTO** | ⚠️ No resuelto — solo hace dlog, no redirige a main thread |
+| H3 | No se ofrece `clap.thread-check` | `clap/ext/thread-check.h` "highly recommended" | **ALTO** | ✅ Resuelto — `s_hostThreadCheck` implementado en `PluginChain.cpp` |
+| H4 | No se sigue el orden oficial de GUI (saltan `can_resize`/`adjust_size`) | `clap/ext/gui.h` doc pág GUI | **MEDIO** | ⬜ No implementado |
+| H5 | `gui->closed` callback hace no-op, ignora `was_destroyed` | `clap/ext/gui.h:closed` thread-safe | **MEDIO** | ✅ Resuelto — dispatch a main thread con `g_main_context_invoke` |
+| H6 | `clap_host_log` callback es vacío | `clap/ext/log.h` | **MEDIO** — cero diagnóstica | ✅ Resuelto — redirige a `ILogSink` en `PluginChain.cpp:109` |
+| H7 | `nativeScanClap` carga + cierra .clap en el main thread sin sandbox | práctica estándar | **MEDIO** | ⬜ No implementado |
+| H8 | `nativePluginLoad` hace `init` + `activate` síncronamente en main thread | `clap/plugin.h:init` [main-thread] | **BAJO** | ⬜ No implementado (aceptado — comportamiento por spec) |
 
 ## 2. Arquitectura objetivo
 
@@ -157,20 +157,20 @@ Añadir a `log()`:
 ## 3. Plan de implementación por fases
 
 ### Fase 1: Host Defensivo (PRIORIDAD MÁXIMA)
-- [ ] H1: PluginChain::process lock-free con `std::atomic<PluginInstance*>` + generation
+- [x] H1: PluginChain::process lock-free con `std::atomic<Snapshot*>` + generation
 - [ ] H2: `clap_host_request_resize` via `g_main_context_invoke`
-- [ ] H3: Implementar `clap_host_thread_check_t`
-- [ ] H5: `clap_host_gui_closed` con dispatch + respeto de `was_destroyed`
-- [ ] H6: `clap_host_log` real con relé a log()
+- [x] H3: Implementar `clap_host_thread_check_t`
+- [x] H5: `clap_host_gui_closed` con dispatch + respeto de `was_destroyed`
+- [x] H6: `clap_host_log` real con relé a log()
 - [ ] H4: Seguir orden oficial de GUI: añadir `get_preferred_api`, `can_resize`, `adjust_size`, `get_resize_hints`
 - [ ] Validación: cada puntero de función del plugin se valida `!= nullptr` antes de llamar
 
 ### Fase 2: State & Parámetros async
-- [ ] Implementar `clap_istream`/`clap_ostream` con streams de memoria
+- [x] Implementar `clap_istream`/`clap_ostream` con streams de memoria (en `PluginChain.cpp`)
 - [ ] `clap_plugin_state->load/save` desde un thread dedicado
 
 ### Fase 3: Logs forenses
-- [ ] Cada fase del ciclo de vida del plugin loguea con timestamp
+- [x] Cada fase del ciclo de vida del plugin loguea con timestamp
 - [ ] JS muestra estado failed en rojo en la lista de plugins
 
 ## 4. Criterios de aceptación

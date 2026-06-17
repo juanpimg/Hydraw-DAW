@@ -92,6 +92,17 @@ html,body{
 #transport .btn-track{cursor:pointer;border:none;border-radius:var(--r-lg);padding:var(--sp-2) var(--sp-6);font-size:var(--fs-md);line-height:1;background:var(--bg4);color:var(--txt3);transition:var(--tr-base);font-family:inherit}
 #transport .btn-track:hover{background:var(--bd2);color:var(--txt)}
 #track-count{font-size:var(--fs-base);color:var(--txt4)}
+#transport .bpm-wrap{display:inline-flex;align-items:center;gap:var(--sp-2);background:var(--bg3);border:1px solid var(--bd);border-radius:var(--r-md);padding:2px 6px;height:24px}
+#transport .bpm-input{width:42px;background:transparent;border:none;color:var(--txt);font-size:var(--fs-md);font-family:var(--font-mono);text-align:right;outline:none;-moz-appearance:textfield}
+#transport .bpm-input::-webkit-outer-spin-button,#transport .bpm-input::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
+#transport .bpm-label{font-size:var(--fs-xs);color:var(--txt4);font-family:var(--font-mono);letter-spacing:0.5px}
+#transport .ts-wrap{display:inline-flex;align-items:center;gap:var(--sp-1);background:var(--bg3);border:1px solid var(--bd);border-radius:var(--r-md);padding:2px 6px;height:24px}
+#transport .ts-input{width:22px;background:transparent;border:none;color:var(--txt);font-size:var(--fs-md);font-family:var(--font-mono);text-align:center;outline:none;-moz-appearance:textfield}
+#transport .ts-input::-webkit-outer-spin-button,#transport .ts-input::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
+#transport .ts-slash{color:var(--txt4);font-size:var(--fs-md);font-family:var(--font-mono)}
+#transport .bar-display{font-size:var(--fs-md);color:var(--accent2);font-family:var(--font-mono);min-width:30px;text-align:center;padding:0 var(--sp-3);background:var(--bg3);border:1px solid var(--bd);border-radius:var(--r-md);height:24px;line-height:22px}
+#transport .tool-group{display:inline-flex;align-items:center;gap:2px;background:var(--bg3);border:1px solid var(--bd);border-radius:var(--r-md);padding:2px;height:28px}
+#transport .tool-group .sm-btn{height:22px;min-width:24px;padding:0 4px}
 
 /* ── MAIN ── */
 #main{display:flex;flex-direction:column;overflow:hidden}
@@ -149,6 +160,14 @@ html,body{
   background:var(--accent-bg);border:1px solid rgba(85,153,255,0.25);
   cursor:grab;overflow:hidden;z-index:2;min-width:16px;
 }
+/* Tool cursors: applied as a class on the track-list container so
+   the cursor cascades down to all .clip-block children. Using
+   !important so it wins over the per-element cursor:grab declared
+   on .clip-block above. */
+#track-list.tool-split .clip-block,
+#track-list.tool-split{cursor:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='%23e2e8f0' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><circle cx='6' cy='6' r='3' fill='%23121714'/><circle cx='6' cy='18' r='3' fill='%23121714'/><line x1='20' y1='4' x2='8.12' y2='15.88'/><line x1='14.47' y1='14.48' x2='20' y2='20'/><line x1='8.12' y1='8.12' x2='12' y2='12'/></svg>") 12 12,crosshair !important}
+#track-list.tool-fade .clip-block,
+#track-list.tool-fade{cursor:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='%23e2e8f0' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M5 19V5'/><path d='M19 5v14'/><path d='M5 19c0-8 14-8 14-14' fill='%235599ff33'/></svg>") 12 12,ew-resize !important}
 .clip-scroll{position:absolute;top:0;left:0;right:0;bottom:0}
 .clip-block.dragging{opacity:0.85;z-index:10;cursor:grabbing;box-shadow:var(--shadow-md)}
 .clip-block .clip-label{
@@ -156,6 +175,18 @@ html,body{
   color:rgba(200,200,240,0.6);white-space:nowrap;overflow:hidden;
   text-overflow:ellipsis;max-width:calc(100% - 16px);pointer-events:none;z-index:1;
 }
+/* Fade handle: shows the actual fade area with a visible gradient.
+   Clickable so the user can drag to resize the fade. The width is
+   set dynamically from the telemetry fadeIn/fadeOut value. */
+.clip-block .fade-in,
+.clip-block .fade-out{
+  position:absolute;top:0;bottom:0;min-width:0;z-index:3;
+}
+.clip-block .fade-in{left:0;background:linear-gradient(to right,rgba(85,153,255,0.5),rgba(85,153,255,0.08));border-top-left-radius:5px;border-bottom-left-radius:5px;border-right:1px solid rgba(85,153,255,0.3)}
+.clip-block .fade-out{right:0;background:linear-gradient(to left,rgba(85,153,255,0.5),rgba(85,153,255,0.08));border-top-right-radius:5px;border-bottom-right-radius:5px;border-left:1px solid rgba(85,153,255,0.3)}
+/* In fade tool mode, show ew-resize on fade overlays */
+#track-list.tool-fade .clip-block .fade-in,
+#track-list.tool-fade .clip-block .fade-out{cursor:ew-resize !important}
 .track.drag-target{background:var(--accent-bg)}
 .track.drag-target .clip{border:1px dashed var(--accent);border-radius:var(--r-lg)}
 .track.add-track:hover{background:var(--bg4)}
@@ -316,6 +347,27 @@ html,body{
     </button>
     <span class="time" id="time">00:00.000</span>
     <span class="status" id="status">STOP</span>
+    <span class="bpm-wrap" title="Tempo">
+      <input type="number" id="bpm-input" class="bpm-input" min="20" max="300" step="0.01" value="120" onchange="setBPM(this.value)">
+      <span class="bpm-label">BPM</span>
+    </span>
+    <span class="ts-wrap" title="Time signature">
+      <input type="number" id="ts-num" class="ts-input" min="1" max="32" step="1" value="4" onchange="setTimeSig()">
+      <span class="ts-slash">/</span>
+      <input type="number" id="ts-den" class="ts-input" min="1" max="32" step="1" value="4" onchange="setTimeSig()">
+    </span>
+    <span class="bar-display" id="bar-display" title="Bar : Beat">1.1</span>
+    <span class="tool-group" title="Edit tool">
+      <button class="sm-btn on" id="tool-pointer" onclick="setTool('pointer')" title="Pointer (select / move)">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M5.5 3.21V20.8c0 .45.54.67.85.35l4.86-4.86 2.94 6.4c.5.1.8-.32.95-.62l1.69-3.65 3.65-1.69c.3-.15.72-.45.62-.95l-6.4-2.94 4.86-4.86c.32-.31.1-.85-.35-.85H5.5z"/></svg>
+      </button>
+      <button class="sm-btn" id="tool-split" onclick="setTool('split')" title="Split (click a clip to cut it at the playhead)">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><line x1="20" y1="4" x2="8.12" y2="15.88"/><line x1="14.47" y1="14.48" x2="20" y2="20"/><line x1="8.12" y1="8.12" x2="12" y2="12"/></svg>
+      </button>
+      <button class="sm-btn" id="tool-fade" onclick="setTool('fade')" title="Fade (drag the left/right edge of a clip to set fade in/out)">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 19V5"/><path d="M19 5v14"/><path d="M5 19c0-8 14-8 14-14"/></svg>
+      </button>
+    </span>
     <button class="sm-btn on" id="btn-scroll-mode" onclick="toggleScrollMode()" title="Scroll mode">C</button>
     <button class="btn-track" onclick="saveProject()" title="Save project">💾 Save</button>
     <button class="btn-track" onclick="loadProject()" title="Load project">📂 Load</button>
@@ -434,6 +486,8 @@ var STATE = {
   peaks: [], masterPeakL: 0, masterPeakR: 0,
   volumes: [], mutes: [], solos: [], arms: [],
   names: [], audioFrames: [], clipStarts: [], peakCaches: [],
+  clipBlocks: [], clipNames: [], clipPeakCaches: [],
+  bpm: 120, timeSigNum: 4, timeSigDen: 4, sampleRate: 48000,
   browserPath: '', pluginsCache: [], initialized: false, tracksRendered: false
 };
 var lastUpdate = 0;
@@ -470,43 +524,86 @@ function cn(name, arg) {
 }
 
 // ── NATIVE UPDATE LOOP ──
-function updateUIFromNative(a) {
-  if (Date.now() - lastUpdate < 25) return;
-  lastUpdate = Date.now();
+// State for the generation counter. The C++ side bumps g_telemetryGen
+// on every full push. The JS side stores the last seen gen and
+// ignores stale full updates from a generation whose caches have
+// been reset (e.g. by a subsequent __onProjectLoaded). See
+// PERSISTENCE_SPEC.md §"C++ → JS telemetry".
+var _lastSeenGen = -1;
+var _currentLoadGen = -1;
 
-  if (!a || !Array.isArray(a)) {
+function updateUIFromNative(payload) {
+  // Defensive: if the payload is an array (legacy format from before
+  // the JSON migration), wrap it into an object with positional keys.
+  // This is a fallback only — the C++ side now always sends JSON.
+  if (Array.isArray(payload)) {
+    var a = payload;
+    payload = {
+      full: a[0], playing: a[1], playhead: a[2], trackCount: a[3],
+      masterPeakL: a[4], masterPeakR: a[5], masterVolume: a[6], peaks: a[7],
+      volumes: a[8], mutes: a[9], solos: a[10], arms: a[11],
+      names: a[12], audioFrames: a[13], clipStarts: a[14]
+    };
+  }
+
+  if (!payload || typeof payload !== 'object') {
     log('WARN', 'LOOP', 'Received invalid data from native');
     return;
   }
 
-  // Compact array format with differential flag:
-  // a[0]==0 → minimal [0,playing,ph,tc,masterPeakL,masterPeakR,masterVol,[peaks]]
-  // a[0]==1 → full    [1, ... ,[volumes],[mutes],[solos],[arms],[names],[audioFrames],[clipStarts]]
-  var isFull = a[0] === 1;
-  STATE.playing = !!a[1];
-  STATE.playhead = a[2] || 0;
-  STATE.trackCount = a[3] || 1;
-  STATE.masterPeakL = a[4] || 0;
-  STATE.masterPeakR = a[5] || 0;
-  STATE.masterVolume = a[6] !== undefined ? a[6] : 1;
-  STATE.peaks = a[7] || [];
+  // Generation check. A full update with gen < _lastSeenGen is stale:
+  // its caches have been reset by a more recent __onProjectLoaded.
+  // Drop it on the floor to prevent the post-load glitch.
+  var gen = (payload.gen !== undefined) ? payload.gen : -1;
+  var isFull = payload.full === 1;
+  if (isFull && _lastSeenGen >= 0 && gen < _lastSeenGen) {
+    log('WARN', 'LOOP', 'dropping stale full update gen=' + gen + ' (last=' + _lastSeenGen + ')');
+    return;
+  }
+
+  // Debounce ONLY partial updates. Full updates carry structural
+  // state changes (track list, audio frames, etc.) and MUST be
+  // processed unconditionally — otherwise the rebuild check sees
+  // stale _lastRenderedTrackCount and the new clips/waveforms never
+  // appear.
+  if (!isFull && Date.now() - lastUpdate < 25) return;
+  lastUpdate = Date.now();
+
+  // JSON-parsed object: read by name. No more positional index
+  // fragility.
+  STATE.playing = !!payload.playing;
+  STATE.playhead = payload.playhead || 0;
+  STATE.trackCount = payload.trackCount || 1;
+  STATE.masterPeakL = payload.masterPeakL || 0;
+  STATE.masterPeakR = payload.masterPeakR || 0;
+  STATE.masterVolume = payload.masterVolume !== undefined ? payload.masterVolume : 1;
+  STATE.peaks = payload.peaks || [];
+  STATE.bpm = payload.bpm !== undefined ? payload.bpm : 120;
+  STATE.timeSigNum = payload.timeSigNum !== undefined ? payload.timeSigNum : 4;
+  STATE.timeSigDen = payload.timeSigDen !== undefined ? payload.timeSigDen : 4;
 
   if (isFull) {
-    STATE.volumes = a[8] || [];
-    STATE.mutes = a[9] || [];
-    STATE.solos = a[10] || [];
-    STATE.arms = a[11] || [];
-    STATE.names = a[12] || [];
-    STATE.audioFrames = a[13] || [];
-    STATE.clipStarts = a[14] || [];
+    STATE.volumes = payload.volumes || [];
+    STATE.mutes = payload.mutes || [];
+    STATE.solos = payload.solos || [];
+    STATE.arms = payload.arms || [];
+    STATE.names = payload.names || [];
+    STATE.audioFrames = payload.audioFrames || [];
+    STATE.clipStarts = payload.clipStarts || [];
+    STATE.clipBlocks = payload.clipBlocks || [];
+    STATE.clipNames = payload.clipNames || [];
+    STATE.clipPeakCaches = payload.clipPeakCaches || [];
+    _lastSeenGen = gen;
     _needsRulerRedraw = true;
     _needsWaveformRedraw = true;
     _timelineWidthDirty = true;
   }
-  // WebKitGTK drops trailing zeros from JS arrays. Pad with zeros
-  // so every track index i has a defined audioFrames[i]. Runs
-  // regardless of isFull so clicks / non-full updates also benefit.
+
+  // Defensive: ensure per-track arrays are at least trackCount long.
+  // JSON.parse preserves exact element count, so this is normally a
+  // no-op. It guards against C++ bugs that send a too-short array.
   while (STATE.audioFrames.length < STATE.trackCount) STATE.audioFrames.push(0);
+  while (STATE.clipStarts.length < STATE.trackCount) STATE.clipStarts.push(0);
 
   // Rebuild the track list DOM if the structural state changed: track
   // count (add/remove) or any per-track audio frame count (load/clear
@@ -515,11 +612,36 @@ function updateUIFromNative(a) {
   // tracks' <div>s linger with stale waveforms, and the inline
   // onclick="selectTrack(N)" handlers are bound to indices that no
   // longer match the current track layout.
+  //
+  // _forceFullRebuild is set by __onProjectLoaded. It bypasses the
+  // structural-diff check entirely and forces a full rebuild on the
+  // next update — this is the "audio plays but no waveforms" fix
+  // because it guarantees the clip blocks are recreated even if the
+  // new project happens to have the same track count as the old one.
   var _prevCount = STATE._lastRenderedTrackCount;
   var _prevAudio  = STATE._lastRenderedAudioFrames;
+  var _prevBlocks = STATE._lastRenderedClipBlocks;
   var _curCount   = STATE.trackCount;
   var _curAudio   = STATE.audioFrames || [];
-  var _needRebuild = (_prevCount === undefined) || (_prevCount !== _curCount);
+  var _curBlocks  = STATE.clipBlocks || [];
+
+  // When the engine modifies a clip's AudioBuffer (split, trim,
+  // fade, freeze, OR a same-length WAV replacement), the JS-side
+  // cache of the primary's peak data becomes stale. The cache MUST
+  // be invalidated on every full update for every track that has
+  // audio — the C++ side now returns the correct cache in O(1) when
+  // nothing changed, so the cost is a single async binding call.
+  // RefreshPeaks() only fetches when STATE.peakCaches[i] is null.
+  if (isFull) {
+    for (var _ci2 = 0; _ci2 < _curCount; _ci2++) {
+      if (_curAudio[_ci2] > 0) {
+        STATE.peakCaches[_ci2] = null;
+      }
+    }
+  }
+  var _needRebuild = _forceFullRebuild
+    || (_prevCount === undefined)
+    || (_prevCount !== _curCount);
   if (!_needRebuild && isFull) {
     for (var _i = 0; _i < _curCount; _i++) {
       if ((_prevAudio[_i] || 0) !== (_curAudio[_i] || 0)) {
@@ -527,14 +649,44 @@ function updateUIFromNative(a) {
         break;
       }
       if (_i >= (_prevAudio ? _prevAudio.length : 0)) { _needRebuild = true; break; }
+      // Compare clip block counts too (a split can keep the
+      // primary's frame count while changing the total layout).
+      var curN = (_curBlocks[_i] || []).length;
+      var prevN = (_prevBlocks && _prevBlocks[_i]) ? _prevBlocks[_i].length : 0;
+      if (curN !== prevN) { _needRebuild = true; break; }
+      for (var _ci = 0; _ci < curN; _ci++) {
+        var curC = _curBlocks[_i][_ci];
+        var prevC = _prevBlocks[_i][_ci];
+        if (!prevC || curC[0] !== prevC[0] || curC[1] !== prevC[1]) {
+          _needRebuild = true; break;
+        }
+      }
+      if (_needRebuild) break;
     }
   }
+  if (_forceFullRebuild) {
+    log('INFO', 'UI', 'forced rebuild (post-load): gen=' + gen + ' prevCount=' + _prevCount +
+         ' curCount=' + _curCount + ' curAudio=' + JSON.stringify(_curAudio));
+  }
   if (_needRebuild) {
-    log('INFO', 'UI', 'rebuild: prevCount=' + _prevCount + ' curCount=' + _curCount +
-         ' prevAudio=' + JSON.stringify(_prevAudio || []) + ' curAudio=' + JSON.stringify(_curAudio));
+    if (!_forceFullRebuild) {
+      log('INFO', 'UI', 'rebuild: gen=' + gen + ' prevCount=' + _prevCount + ' curCount=' + _curCount +
+           ' prevAudio=' + JSON.stringify(_prevAudio || []) + ' curAudio=' + JSON.stringify(_curAudio));
+    }
     renderTrackList();
+    // Mixer channels mirror the track list: same count, same
+    // names, same per-track state (volume, mute, solo, arm). If
+    // the track list needs rebuilding, the mixer does too —
+    // otherwise after a project load the timeline shows the new
+    // tracks correctly but the mixer panel keeps showing the old
+    // channels (no fader for new tracks, stale names for
+    // re-numbered ones). Rebuilding is cheap (the mixer panel
+    // is small) and consistent with the track list rebuild.
+    renderMixerTracks();
     STATE._lastRenderedTrackCount = _curCount;
     STATE._lastRenderedAudioFrames = _curAudio.slice();
+    STATE._lastRenderedClipBlocks = _curBlocks.map(function(arr) { return arr.slice(); });
+    _forceFullRebuild = false;  // one-shot
   }
 
   refreshPeaks();
@@ -547,7 +699,7 @@ function updateUIFromNative(a) {
     var tn = document.getElementById('tn-' + i);
     if (tn) tn.textContent = (STATE.names[i] || 'Track ' + (i+1)).substring(0, 14);
     var cn = document.getElementById('cn-' + i);
-    if (cn) cn.textContent = (STATE.names[i] || 'Ch ' + (i+1)).substring(0, 8);
+    if (cn) cn.textContent = (STATE.names[i] || ('Track ' + (i+1))).substring(0, 8);
     var dh = document.getElementById('dh-' + i);
     if (dh) dh.style.display = STATE.audioFrames[i] > 0 ? 'none' : '';
     // Track header M/S/A
@@ -567,7 +719,9 @@ function updateUIFromNative(a) {
   }
 
   updateTransport();
+  updateTransportBpm();
   updateTime();
+  updateBarDisplay();
   updateMixer();
   updateMaster();
   updateFxPanel();
@@ -581,7 +735,7 @@ function updateUIFromNative(a) {
   if (!STATE.tracksRendered) {
     log('INFO', 'LOOP', 'First telemetry received — rendering tracks & mixer');
     renderTrackList();
-    renderMixerChannels();
+    renderMixerTracks();
     STATE.tracksRendered = true;
   }
 
@@ -599,6 +753,51 @@ function updateUIFromNative(a) {
 }
 window.onNativeUpdate = updateUIFromNative;
 
+// Reset all per-project optimization caches. Called by the C++ side
+// via window.__onProjectLoaded() right after a successful project
+// load, BEFORE the next telemetry tick with the new track layout.
+//
+// We set _forceFullRebuild = true so that the NEXT updateUIFromNative
+// — regardless of whether it arrives as a full or partial update,
+// regardless of timing — triggers a complete track list rebuild and
+// re-fetches all peak caches. This is the load-fix belt-and-braces:
+// even if the C++ side somehow sends a partial update first (e.g.
+// because the UI thread raced with the load dispatch), we still
+// rebuild from scratch.
+//
+// The flag is one-shot: the rebuild consumes it (sets it back to
+// false), so it only affects the single update immediately after
+// the load.
+//
+// loadGen: the C++ side passes the generation it bumped for this
+// load. We store it so that any stale full update from a previous
+// generation (e.g. queued before the load but processed after)
+// is dropped.
+var _forceFullRebuild = false;
+window.__onProjectLoaded = function(loadGen) {
+  log('INFO', 'LOAD', 'invalidate UI caches + force next rebuild (loadGen=' + loadGen + ')');
+  STATE.peakCaches = [];
+  STATE._lastPluginSel = -2;
+  STATE._clipNames = [];
+  STATE._lastRenderedTrackCount = undefined;
+  STATE._lastRenderedAudioFrames = undefined;
+  STATE._lastRenderedClipBlocks = undefined;
+  STATE._needsTrackRender = true;
+  _forceFullRebuild = true;
+  if (typeof loadGen === 'number') {
+    _currentLoadGen = loadGen;
+    // Bump _lastSeenGen past the new generation so any
+    // in-flight full update from BEFORE the load (gen <
+    // loadGen) is recognized as stale and dropped.
+    _lastSeenGen = loadGen;
+  }
+  // Schedule a layout-aware redraw. The next updateUIFromNative
+  // will do the actual rebuild (we have a flag for it), and any
+  // pending peakCache fetches that resolve after the rebuild will
+  // call drawAllWaveforms with the new canvas dimensions.
+  requestAnimationFrame(function() { _needsWaveformRedraw = true; });
+};
+
 // ── PROJECT / EXPORT ──
 function saveProject() {
   cn('nativeShowSaveDialog', 'Save project,.opndaw,.opndaw').then(function(path) {
@@ -606,6 +805,10 @@ function saveProject() {
     cn('nativeSaveProject', path).then(function(ret) {
       STATE.lastProjectPath = path;
       log('INFO', 'SAVE', ret);
+      var ok = (ret === '"OK"' || ret === 'OK');
+      if (typeof showStatus === 'function') {
+        showStatus(ok ? 'Project saved' : 'Save failed', !ok);
+      }
     });
   });
 }
@@ -616,6 +819,10 @@ function loadProject() {
     cn('nativeLoadProject', path).then(function(ret) {
       STATE.lastProjectPath = path;
       log('INFO', 'LOAD', ret);
+      var ok = (ret === '"OK"' || ret === 'OK');
+      if (typeof showStatus === 'function') {
+        showStatus(ok ? 'Project loaded' : 'Load failed', !ok);
+      }
       // The C++ side already requested a full telemetry refresh via
       // g_uiDirty.fetch_or(kDirtyExtended), so the next uiUpdateLoop tick
       // will push the new track layout. No need to poke the UI here.
@@ -839,16 +1046,37 @@ function renderTrackList() {
     var mc = STATE.mutes[i] ? ' on-m' : '';
     var sc = STATE.solos[i] ? ' on-s' : '';
     var ac = STATE.arms[i] ? ' on-a' : '';
-    var hasAudio = STATE.audioFrames[i] > 0;
+    // Build the per-track clip-block HTML from the multi-clip
+    // payload. If clipBlocks is missing (legacy telemetry), fall
+    // back to the single-clip legacy fields (audioFrames/clipStarts).
+    var trackClips = STATE.clipBlocks && STATE.clipBlocks[i] ? STATE.clipBlocks[i] : null;
+    var clipNamesForTrack = STATE.clipNames && STATE.clipNames[i] ? STATE.clipNames[i] : null;
+    var hasAudio = trackClips ? (trackClips.length > 0) : (STATE.audioFrames[i] > 0);
     var clipBlock = '';
     if (hasAudio) {
-      var clipX = Math.round((STATE.clipStarts[i] / sr) * pxPerSec);
-      var clipW = Math.round((STATE.audioFrames[i] / sr) * pxPerSec);
-      clipBlock = '<div class="clip-scroll" id="cs-' + i + '">' +
-        '<div class="clip-block" id="cb-' + i + '" data-track="' + i + '" style="left:' + clipX + 'px;width:' + Math.max(20, clipW) + 'px">' +
-          '<canvas class="wf" id="wf-' + i + '"></canvas>' +
-          '<span class="clip-label">' + escHtml((_clipNames[i] || n).substring(0, 20)) + '</span>' +
-        '</div></div>';
+      var clipsToRender;
+      if (trackClips) {
+        clipsToRender = trackClips.map(function(c, idx) {
+          return { start: c[0], frames: c[1], fadeIn: c[2] || 0, fadeOut: c[3] || 0, name: (clipNamesForTrack && clipNamesForTrack[idx]) || (_clipNames[i] || n) };
+        });
+      } else {
+        clipsToRender = [{ start: STATE.clipStarts[i], frames: STATE.audioFrames[i], fadeIn: 0, fadeOut: 0, name: _clipNames[i] || n }];
+      }
+      var blockHtml = '';
+      for (var ci = 0; ci < clipsToRender.length; ++ci) {
+        var clipInfo = clipsToRender[ci];
+        var clipX = Math.round((clipInfo.start / sr) * pxPerSec);
+        var clipW = Math.round((clipInfo.frames / sr) * pxPerSec);
+        var fiPx = Math.round((clipInfo.fadeIn / sr) * pxPerSec);
+        var foPx = Math.round((clipInfo.fadeOut / sr) * pxPerSec);
+        blockHtml += '<div class="clip-block" id="cb-' + i + '-' + ci + '" data-track="' + i + '" data-clip="' + ci + '" style="left:' + clipX + 'px;width:' + Math.max(20, clipW) + 'px">' +
+          '<canvas class="wf" id="wf-' + i + '-' + ci + '"></canvas>' +
+          '<div class="fade-in" style="width:' + Math.min(fiPx, Math.max(20, clipW)) + 'px"></div>' +
+          '<div class="fade-out" style="width:' + Math.min(foPx, Math.max(20, clipW)) + 'px"></div>' +
+          '<span class="clip-label">' + escHtml((clipInfo.name || '').substring(0, 20)) + '</span>' +
+        '</div>';
+      }
+      clipBlock = '<div class="clip-scroll" id="cs-' + i + '">' + blockHtml + '</div>';
     }
     html +=
       '<div class="track' + sel + '" data-track-id="' + i + '">' +
@@ -902,16 +1130,37 @@ function drawRuler() {
   var pxPerSec = 80;
   var rulerOff = 140;
   var scrollOff = _tlScrollX || 0;
-  var firstSec = Math.floor(scrollOff / pxPerSec);
-  var lastSec = Math.ceil((w + scrollOff) / pxPerSec) + 1;
-  for (var s = firstSec; s <= lastSec; s++) {
-    var x = rulerOff + s * pxPerSec - scrollOff;
-    if (x < rulerOff - 20 || x > w + 20) continue;
-    ctx.strokeStyle = cssVar('--bd'); ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(x, 14); ctx.lineTo(x, 24); ctx.stroke();
+  var sr = STATE.sampleRate || 48000;
+  var bpm = STATE.bpm || 120;
+  var num = STATE.timeSigNum || 4;
+  var den = STATE.timeSigDen || 4;
+  // Samples per beat (quarter note). Adjust for denominator:
+  // 4 = quarter, 8 = eighth, etc.
+  var samplesPerBeat = sr * 60 / bpm * (4 / den);
+  var beatsPerBar = num;
+  var samplesPerBar = samplesPerBeat * beatsPerBar;
+  var pxPerBeat = (samplesPerBeat / sr) * pxPerSec;
+  // Find first visible bar/beat
+  var firstBarIdx = Math.floor((scrollOff / pxPerSec * sr) / samplesPerBar);
+  var lastBarIdx = Math.ceil(((w + scrollOff) / pxPerSec * sr) / samplesPerBar) + 1;
+  for (var b = firstBarIdx; b <= lastBarIdx; b++) {
+    var barSample = b * samplesPerBar;
+    var barX = rulerOff + (barSample / sr) * pxPerSec - scrollOff;
+    if (barX < rulerOff - 60 || barX > w + 60) continue;
+    // Bar line (heavier)
+    ctx.strokeStyle = cssVar('--bd2'); ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(barX, 8); ctx.lineTo(barX, 24); ctx.stroke();
     ctx.fillStyle = cssVar('--txt3'); ctx.font = '9px -apple-system,BlinkMacSystemFont,sans-serif';
-    ctx.fillText(s + 's', x + 3, 11);
+    ctx.fillText((b + 1) + '', barX + 3, 9);
+    // Sub-beat lines
+    for (var bi = 1; bi < beatsPerBar; bi++) {
+      var beatSample = barSample + bi * samplesPerBeat;
+      var beatX = rulerOff + (beatSample / sr) * pxPerSec - scrollOff;
+      if (beatX < rulerOff - 10 || beatX > w + 10) continue;
+      ctx.strokeStyle = cssVar('--bd'); ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(beatX, 16); ctx.lineTo(beatX, 24); ctx.stroke();
+    }
   }
-  var phx = rulerOff + (STATE.playhead / 48000) * pxPerSec - scrollOff;
+  // Playhead
+  var phx = rulerOff + (STATE.playhead / sr) * pxPerSec - scrollOff;
   if (phx >= rulerOff && phx <= c.width) {
     ctx.strokeStyle = cssVar('--yellow'); ctx.lineWidth = 1.5;
     ctx.beginPath(); ctx.moveTo(phx, 0); ctx.lineTo(phx, 24); ctx.stroke();
@@ -982,6 +1231,12 @@ function applyTimelineScroll() {
   drawRuler();
 }
 
+// Tool actions on clip blocks: split (click) / fade (drag edge).
+// The single existing mousedown handler on #track-list (further
+// below) inspects `_tool` and dispatches to split / fade / drag
+// accordingly. We also set a body-level cursor so the visual hint
+// is consistent regardless of which DOM element the mouse is over.
+
 function toggleScrollMode() {
   _scrollMode = _scrollMode === 'continuous' ? 'page' : 'continuous';
   var btn = document.getElementById('btn-scroll-mode');
@@ -990,9 +1245,73 @@ function toggleScrollMode() {
     btn.classList.toggle('on', _scrollMode === 'continuous');
     btn.title = _scrollMode === 'continuous' ? 'Continuous scroll' : 'Page scroll';
   }
-  _playheadTargetFraction = -1;
-  log('INFO', 'TIMELINE', 'Scroll mode: ' + _scrollMode);
 }
+
+function setBPM(v) {
+  var bpm = parseFloat(v);
+  if (isNaN(bpm) || bpm < 20 || bpm > 300) return;
+  STATE.bpm = bpm;
+  cn('nativeSetBPM', String(bpm));
+  _needsRulerRedraw = true;
+}
+
+function setTimeSig() {
+  var n = parseInt(document.getElementById('ts-num').value, 10);
+  var d = parseInt(document.getElementById('ts-den').value, 10);
+  if (isNaN(n) || isNaN(d) || n < 1 || n > 32 || d < 1 || d > 32) return;
+  STATE.timeSigNum = n;
+  STATE.timeSigDen = d;
+  cn('nativeSetTimeSignature', n + ',' + d);
+  _needsRulerRedraw = true;
+}
+
+function updateTransportBpm() {
+  var bpmEl = document.getElementById('bpm-input');
+  if (bpmEl && document.activeElement !== bpmEl) bpmEl.value = STATE.bpm.toFixed(2);
+  var nEl = document.getElementById('ts-num');
+  if (nEl && document.activeElement !== nEl) nEl.value = STATE.timeSigNum;
+  var dEl = document.getElementById('ts-den');
+  if (dEl && document.activeElement !== dEl) dEl.value = STATE.timeSigDen;
+}
+
+function updateBarDisplay() {
+  var bd = document.getElementById('bar-display');
+  if (!bd) return;
+  var sr = STATE.sampleRate || 48000;
+  var bpm = STATE.bpm || 120;
+  var num = STATE.timeSigNum || 4;
+  var den = STATE.timeSigDen || 4;
+  var samplesPerBeat = sr * 60 / bpm * (4 / den);
+  var totalBeats = (STATE.playhead || 0) / samplesPerBeat;
+  if (totalBeats < 0) totalBeats = 0;
+  var whole = Math.floor(totalBeats);
+  var bar = Math.floor(whole / num) + 1;
+  var beat = (whole % num) + 1;
+  bd.textContent = bar + '.' + beat;
+}
+
+var _tool = 'pointer';
+
+function setTool(t) {
+  _tool = t;
+  ['pointer','split','fade'].forEach(function(name) {
+    var b = document.getElementById('tool-' + name);
+    if (b) b.classList.toggle('on', name === t);
+  });
+  // Apply the tool class to #track-list so the CSS rule (with
+  // !important) overrides the per-element cursor:grab on each
+  // .clip-block. This is the only reliable way to change the
+  // cursor across the timeline area without fighting specificity.
+  var list = document.getElementById('track-list');
+  if (list) {
+    list.classList.remove('tool-pointer', 'tool-split', 'tool-fade');
+    list.classList.add('tool-' + t);
+  }
+  log('INFO', 'TOOL', 'tool=' + t);
+}
+
+var _fadeDrag = null;
+var g_uiDirty_pending = false;
 
 function autoScrollTimeline() {
   if (_dragInProgress) return;
@@ -1067,39 +1386,53 @@ function refreshPeaks() {
 function drawAllWaveforms() {
   if (!_needsWaveformRedraw) return;
   _needsWaveformRedraw = false;
-  for (var i = 0; i < STATE.trackCount; i++) {
-    var c = document.getElementById('wf-' + i);
-    if (!c) continue;
-    var parent = c.parentElement;
-    if (!parent) continue;
-    var w = parent.clientWidth, h = parent.clientHeight;
+  // Iterate over every clip-block in the DOM (not just trackCount
+  // single primary clips) so split clips are all drawn.
+  var blocks = document.querySelectorAll('.clip-block');
+  for (var bi = 0; bi < blocks.length; ++bi) {
+    var block = blocks[bi];
+    var canvas = block.querySelector('canvas.wf');
+    if (!canvas) continue;
+    var w = block.clientWidth, h = block.clientHeight;
     if (w < 4 || h < 4) continue;
-
-    if (!(STATE.audioFrames[i] > 0)) {
-      c.width = w; c.height = h;
-      var ctx = c.getContext('2d');
-      ctx.clearRect(0, 0, w, h);
-      continue;
+    var trackId = parseInt(block.getAttribute('data-track'), 10);
+    var clipId = parseInt(block.getAttribute('data-clip') || '0', 10);
+    // All clips (primary and extras) now receive their peak cache
+    // synchronously via the telemetry clipPeakCaches payload. The
+    // legacy STATE.peakCaches async path remains as a fallback.
+    var pc = null;
+    var cpc = STATE.clipPeakCaches[trackId];
+    if (cpc && cpc[clipId] && cpc[clipId].length) {
+      pc = cpc[clipId];
+    } else if (clipId === 0 && STATE.peakCaches[trackId] && STATE.peakCaches[trackId].length) {
+      pc = STATE.peakCaches[trackId];
     }
-
-    var pc = STATE.peakCaches[i];
-    if (!pc || !pc.length) {
-      log('DEBUG', 'WF', 'Track ' + i + ' has audioFrames=' + STATE.audioFrames[i] + ' but peakCaches[i] is empty');
-      continue;
-    }
-    c.width = w; c.height = h;
-    c.style.left = '0'; c.style.top = '0';
-    c.style.width = w + 'px'; c.style.height = h + 'px';
-    var ctx = c.getContext('2d');
+    canvas.width = w; canvas.height = h;
+    var ctx = canvas.getContext('2d');
     ctx.clearRect(0, 0, w, h);
-    var mid = h / 2, amp = h * 0.4, bars = Math.max(1, pc.length);
+    if (!pc || !pc.length) {
+      ctx.strokeStyle = 'rgba(148,163,184,0.25)'; ctx.lineWidth = 1;
+      var mid = h / 2;
+      ctx.beginPath(); ctx.moveTo(0, mid); ctx.lineTo(w, mid); ctx.stroke();
+      continue;
+    }
+    // Density-based bar count: 1 bar every ~2 pixels of clip width
+    // Use the peak cache size directly as the bar count. C++ now
+    // generates 1 peak per 256 frames of audio (5.3ms @ 48kHz), so
+    // every bar corresponds to exactly 1 cache sample — no resampling,
+    // no pixel-based target, no max-pool or interpolation. A 5s clip
+    // has ~937 bars, a 0.5s clip has ~93 bars, both at the same
+    // temporal density (187 bars/second of audio). The canvas width
+    // only determines where bars are placed, not how many there are.
+    var targetBars = pc.length;
+    var mid2 = h / 2, amp = h * 0.4;
     ctx.strokeStyle = 'rgba(148,163,184,0.5)'; ctx.lineWidth = 1;
-    for (var b = 0; b < bars; b++) {
-      var idx = Math.floor(b / bars * pc.length);
-      if (idx >= pc.length) idx = pc.length - 1;
-      var mx = Math.min(pc[idx] * amp, amp);
-      var bx = b * w / bars;
-      ctx.beginPath(); ctx.moveTo(bx, mid - mx); ctx.lineTo(bx, mid + mx); ctx.stroke();
+    for (var b = 0; b < targetBars; b++) {
+      // Direct 1:1 — bar index b reads cache sample b
+      var mx = pc[b] || 0;
+      mx = Math.min(mx * amp, amp);
+      var bx = (b + 0.5) * w / targetBars;
+      ctx.beginPath(); ctx.moveTo(bx, mid2 - mx); ctx.lineTo(bx, mid2 + mx); ctx.stroke();
     }
   }
 }
@@ -1248,12 +1581,12 @@ function initBrowser() {
 }
 
 // ── MIXER ──
-function renderMixerChannels() {
+function renderMixerTracks() {
   var cont = document.getElementById('mixer-channels');
   if (!cont) { log('WARN', 'UI', 'mixer-channels element not found'); return; }
   var html = '';
   for (var i = 0; i < STATE.trackCount; i++) {
-    var n = STATE.names[i] || ('Ch' + (i + 1));
+    var n = STATE.names[i] || ('Track ' + (i + 1));
     var mc = STATE.mutes[i] ? ' on-m' : '';
     var sc = STATE.solos[i] ? ' on-s' : '';
     var ac = STATE.arms[i] ? ' on-a' : '';
@@ -1277,7 +1610,7 @@ function renderMixerChannels() {
       '</div>';
   }
   cont.innerHTML = html;
-  log('DEBUG', 'UI', 'renderMixerChannels: ' + STATE.trackCount + ' channels');
+  log('DEBUG', 'UI', 'renderMixerTracks: ' + STATE.trackCount + ' tracks');
 }
 
 // ── VU meter RAF loop ──
@@ -1860,41 +2193,118 @@ function initClipDrag() {
   if (!list) return;
   _clipDragInitialized = true;
 
-  // Delegated mousedown handler for track selection. Fires on press,
-  // BEFORE any DOM replacement could detach the target element.
-  // Without this, a telemetry-driven renderTrackList() between
-  // mousedown and mouseup causes the browser to suppress the click
-  // event entirely (mousedown_element !== mouseup_element).
+  // Single delegated mousedown handler. Handles both track selection
+  // and tool dispatch (split / fade / drag-to-move). We intentionally
+  // use ONE handler because two separate listeners on the same
+  // element compete: the first one's re-render side effects
+  // (e.g. updateFxPanel) can detach the .clip-block target before
+  // the second listener runs, breaking `e.target.closest(...)`.
   list.addEventListener('mousedown', function(e) {
     if (e.button !== 0) return;
     if (e.target.closest('.tb')) return;       // M/S/A buttons
+
+    // ── Track selection (add-track row → add a new track) ──
     var track = e.target.closest('.track');
     if (!track) return;
     if (track.classList.contains('add-track')) { addTrack(); return; }
     var idx = parseInt(track.dataset.trackId);
     if (isNaN(idx)) return;
-    // If clicking on a clip-block, select the track WITHOUT a full DOM
-    // rebuild (selectTrack calls renderTrackList) so the drag handler
-    // below can still reference the same .clip-block element.
-    if (e.target.closest('.clip-block')) {
-      if (STATE.sel !== idx) {
-        var prev = document.querySelector('.track.sel');
-        if (prev) prev.classList.remove('sel');
-        STATE.sel = idx;
-        track.classList.add('sel');
-        updateFxPanel();
+
+    // ── Tool dispatch on clip blocks ──
+    // Cache the clip-block element BEFORE any DOM mutation. We
+    // update STATE.sel and call updateFxPanel, but neither of those
+    // destroys the clip-block, so `cb` stays valid for the tool
+    // dispatch below. We capture trackIdx and rect here to avoid
+    // any dependency on later DOM state.
+    var cb = e.target.closest('.clip-block');
+    var trackIdx, clipIdx, rect, edgeWidth, xWithin;
+    if (cb) {
+      trackIdx = parseInt(cb.dataset.track, 10);
+      clipIdx = parseInt(cb.dataset.clip || '0', 10);
+      rect = cb.getBoundingClientRect();
+      edgeWidth = Math.max(8, Math.min(40, rect.width * 0.1));
+      xWithin = e.clientX - rect.left;
+    }
+
+    // Track selection: light-touch update (no full re-render).
+    if (STATE.sel !== idx) {
+      var prev = document.querySelector('.track.sel');
+      if (prev) prev.classList.remove('sel');
+      STATE.sel = idx;
+      track.classList.add('sel');
+      updateFxPanel();
+    }
+
+    // If we didn't click on a clip block, this is just a track-select.
+    if (!cb) return;
+
+    // ── Tool dispatch ──
+    log('INFO', 'TOOL', 'mousedown on clip track=' + trackIdx + ' clip=' + clipIdx + ' tool=' + _tool);
+
+    if (_tool === 'split') {
+      e.stopPropagation();
+      e.preventDefault();
+      // Look up the actual clip's start/frames from STATE.clipBlocks
+      // so the split position is computed in the project timeline
+      // (clipStart + local). We also validate the split is strictly
+      // inside the clip, not at its edges.
+      var trackClipsArr = (STATE.clipBlocks && STATE.clipBlocks[trackIdx]) || [];
+      var clipInfo = trackClipsArr[clipIdx];
+      if (!clipInfo) {
+        log('WARN', 'TOOL', 'no clip info for track=' + trackIdx + ' clip=' + clipIdx);
+        return;
       }
+      var clipStartSamples = clipInfo[0] || 0;
+      var clipFrames = clipInfo[1] || 0;
+      var pxPerSec = 80;
+      var localSamples = Math.round((xWithin / pxPerSec) * 48000);
+      var splitPos = clipStartSamples + localSamples;
+      if (splitPos <= clipStartSamples || splitPos >= clipStartSamples + clipFrames) {
+        log('WARN', 'TOOL', 'split out of range (splitPos=' + splitPos +
+             ' clipStart=' + clipStartSamples + ' clipEnd=' + (clipStartSamples + clipFrames) + ')');
+        return;
+      }
+      log('INFO', 'TOOL', 'split track=' + trackIdx + ' clip=' + clipIdx + ' at sample=' + splitPos);
+      cn('nativeSplitClip', trackIdx + ',' + clipIdx + ',' + splitPos);
       return;
     }
-    selectTrack(idx);
-  });
 
-  list.addEventListener('mousedown', function(e) {
-    var cb = e.target.closest('.clip-block');
-    if (!cb || e.button !== 0) return;
+    if (_tool === 'fade') {
+      // Check if the click landed directly on a fade overlay
+      var fadeOverlay = e.target.closest('.fade-in, .fade-out');
+      var onLeftEdge, onRightEdge;
+      if (fadeOverlay) {
+        onLeftEdge = fadeOverlay.classList.contains('fade-in');
+        onRightEdge = fadeOverlay.classList.contains('fade-out');
+      } else {
+        onLeftEdge = xWithin <= edgeWidth;
+        onRightEdge = (rect.right - e.clientX) <= edgeWidth;
+      }
+      if (!onLeftEdge && !onRightEdge) {
+        log('WARN', 'TOOL', 'fade click not on fade area, ignoring');
+        return;
+      }
+      var fTrackClipsArr = (STATE.clipBlocks && STATE.clipBlocks[trackIdx]) || [];
+      var fClipInfo = fTrackClipsArr[clipIdx];
+      e.stopPropagation();
+      e.preventDefault();
+      _fadeDrag = {
+        trackIdx: trackIdx,
+        clipIdx: clipIdx,
+        edge: onLeftEdge ? 'in' : 'out',
+        startX: e.clientX,
+        samplesPerPx: 48000 / 80,
+        cb: cb,
+        origClipInfo: fClipInfo ? fClipInfo.slice() : null
+      };
+      document.body.style.cursor = 'ew-resize';
+      document.body.style.userSelect = 'none';
+      return;
+    }
+
+    // Default: pointer tool → drag to move.
     e.stopPropagation();
     e.preventDefault();
-    var trackIdx = parseInt(cb.dataset.track);
 
     // Freeze scrolling while we drag a clip — prevents the browser
     // auto‑scrolling the track list and wrecking the clip position.
@@ -1904,6 +2314,7 @@ function initClipDrag() {
 
     clipDrag = {
       trackIdx: trackIdx,
+      clipIdx: clipIdx,
       startX: e.clientX,
       startY: e.clientY,
       origLeft: parseFloat(cb.style.left) || 0,
@@ -1917,6 +2328,48 @@ function initClipDrag() {
     _dragInProgress = true;
   });
 }
+
+// Fade drag handlers: document-level so they keep firing even if the
+// mouse leaves the clip block during the drag.
+document.addEventListener('mousemove', function(e) {
+  if (!_fadeDrag) return;
+  e.preventDefault();
+  var dx = e.clientX - _fadeDrag.startX;
+  var dSamples = Math.round(dx * _fadeDrag.samplesPerPx);
+  var pxPerSec = 80;
+  var sr = 48000;
+  if (_fadeDrag.edge === 'in') {
+    var fadeIn = Math.max(0, dSamples);
+    if (_fadeDrag.origClipInfo) {
+      if (fadeIn > _fadeDrag.origClipInfo[1]) fadeIn = _fadeDrag.origClipInfo[1];
+    }
+    cn('nativeSetFadeIn', _fadeDrag.trackIdx + ',' + _fadeDrag.clipIdx + ',' + fadeIn);
+    // Real-time visual feedback: resize the fade-in overlay
+    var fiEl = _fadeDrag.cb && _fadeDrag.cb.querySelector('.fade-in');
+    if (fiEl) {
+      var fiPx = Math.round((fadeIn / sr) * pxPerSec);
+      fiEl.style.width = Math.max(0, Math.min(fiPx, _fadeDrag.cb.offsetWidth)) + 'px';
+    }
+  } else {
+    var fadeOut = Math.max(0, dSamples);
+    cn('nativeSetFadeOut', _fadeDrag.trackIdx + ',' + _fadeDrag.clipIdx + ',' + fadeOut);
+    // Real-time visual feedback: resize the fade-out overlay
+    var foEl = _fadeDrag.cb && _fadeDrag.cb.querySelector('.fade-out');
+    if (foEl) {
+      var foPx = Math.round((fadeOut / sr) * pxPerSec);
+      foEl.style.width = Math.max(0, Math.min(foPx, _fadeDrag.cb.offsetWidth)) + 'px';
+    }
+  }
+});
+
+document.addEventListener('mouseup', function(e) {
+  if (!_fadeDrag) return;
+  _fadeDrag = null;
+  document.body.style.userSelect = '';
+  // Cursor is restored by the CSS class on #track-list; we just need
+  // to re-apply it in case the browser cleared inline styles.
+  if (typeof setTool === 'function') setTool(_tool);
+});
 
 document.addEventListener('mousemove', function(e) {
   if (!clipDrag) return;
@@ -1967,8 +2420,10 @@ document.addEventListener('mouseup', function(e) {
   // Restore scroll and body styles frozen during drag
   var tl = document.getElementById('track-list');
   if (tl) tl.style.overflowY = clipDrag.savedOverflowY || '';
-  document.body.style.cursor = '';
   document.body.style.userSelect = '';
+  // Re-apply the active tool's cursor so the visual hint survives
+  // the drag (clipDrag unconditionally sets body.style.cursor).
+  if (typeof setTool === 'function') setTool(_tool);
 
   var pxPerSec = 80;
   var sr = 48000;
@@ -1993,50 +2448,28 @@ document.addEventListener('mouseup', function(e) {
   }
 
   if (targetTrack !== clipDrag.trackIdx) {
-    log('INFO', 'CLIP', 'Move clip track ' + clipDrag.trackIdx + ' → ' + targetTrack + ' at ' + newClipStart);
-    var s = clipDrag.trackIdx, d = targetTrack;
-    // If target is the "+" row, add a new track first
+    log('INFO', 'CLIP', 'Move clip ' + clipDrag.trackIdx + ':' + clipDrag.clipIdx +
+        ' → ' + targetTrack + ' at ' + newClipStart);
+    var s = clipDrag.trackIdx, c = clipDrag.clipIdx, d = targetTrack;
+    // Remove the DOM element immediately so the clip doesn't appear in the
+    // source track. The next telemetry tick will re-render everything.
+    if (clipDrag.cb && clipDrag.cb.parentNode) clipDrag.cb.remove();
     if (d >= STATE.trackCount) {
-      var p = cn('nativeAddTrack');
-      if (p && typeof p.then === 'function') {
-        p.then(function(n) {
-          if (typeof n === 'number' && n >= 0) {
-            STATE.trackCount++;
-            d = n;
-            if (STATE.audioFrames[s] > 0) {
-              STATE.audioFrames[d] = STATE.audioFrames[s];
-              STATE.audioFrames[s] = 0;
-              STATE.peakCaches[d] = STATE.peakCaches[s] || [];
-              STATE.peakCaches[s] = [];
-              STATE.clipStarts[d] = newClipStart;
-              STATE.clipStarts[s] = 0;
-              _clipNames[d] = _clipNames[s] || '';
-              _clipNames[s] = '';
-              cn('nativeMoveClip', s + ',' + d + ',' + newClipStart);
-              renderTrackList();
-              refreshPeaks();
-            }
-          }
-        });
+      var n = cn('nativeAddTrack');
+      if (typeof n === 'number' && n >= 0) {
+        STATE.trackCount++;
+        d = n;
+        cn('nativeMoveClip', s + ',' + c + ',' + d + ',0,' + newClipStart);
+        STATE._needsTrackRender = true;
       }
-    } else if (STATE.audioFrames[s] > 0) {
-      // Move local STATE (not swap — source becomes empty)
-      STATE.audioFrames[d] = STATE.audioFrames[s];
-      STATE.audioFrames[s] = 0;
-      STATE.peakCaches[d] = STATE.peakCaches[s] || [];
-      STATE.peakCaches[s] = [];
-      STATE.clipStarts[d] = newClipStart;
-      STATE.clipStarts[s] = 0;
-      _clipNames[d] = _clipNames[s] || '';
-      _clipNames[s] = '';
-      cn('nativeMoveClip', s + ',' + d + ',' + newClipStart);
-      renderTrackList();
-      refreshPeaks();
+    } else {
+      cn('nativeMoveClip', s + ',' + c + ',' + d + ',0,' + newClipStart);
+      STATE._needsTrackRender = true;
     }
   } else {
-    log('INFO', 'CLIP', 'Change clipStart track ' + clipDrag.trackIdx + ' → ' + newClipStart);
-    STATE.clipStarts[clipDrag.trackIdx] = newClipStart;
-    cn('nativeSetClipStart', clipDrag.trackIdx + ',' + newClipStart);
+    log('INFO', 'CLIP', 'Change clipStart track ' + clipDrag.trackIdx +
+        ' clip ' + clipDrag.clipIdx + ' → ' + newClipStart);
+    cn('nativeSetClipStart', clipDrag.trackIdx + ',' + clipDrag.clipIdx + ',' + newClipStart);
     STATE._needsTrackRender = true;
   }
   _dragInProgress = false;
@@ -2046,7 +2479,7 @@ document.addEventListener('mouseup', function(e) {
 // ── INIT ──
 function renderAll() {
   renderTrackList();
-  renderMixerChannels();
+  renderMixerTracks();
   drawRuler();
   var tc = document.getElementById('track-count');
   if (tc) tc.textContent = STATE.trackCount + ' track' + (STATE.trackCount !== 1 ? 's' : '');

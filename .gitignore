@@ -27,3 +27,5 @@ hydraw_*.log
 package-lock.json
 package.json
 skills-lock.json
+.specs/
+*.opndaw

@@ -2,6 +2,7 @@
 #include "Plugin/PluginChain.h"
 #include "Plugin/ClapHost.h"
 #include "Project/ProjectSerializer.h"
+#include "Util/Logger.h"
 #include <webview/webview.h>
 #include <webkit2/webkit2.h>
 #include <gtk/gtk.h>
@@ -33,8 +34,244 @@ static webview::webview* g_wv = nullptr;
 static std::atomic<bool> g_running{true};
 static std::atomic<bool> g_pageReady{false};
 static std::atomic<uint32_t> g_uiDirty{0xFFFFFFFF};
+static std::atomic<bool> g_projectLoadedPending{false};
 static std::atomic<int> g_exportBusy{0};
+// Set by nativeLoadProject for the duration of the load. The UI
+// update thread checks this and skips ticks while a load is in
+// progress. This prevents the race where the UI thread dispatches
+// an updateUIFromNative with stale (or partial) state BEFORE the
+// __onProjectLoaded callback has a chance to invalidate the JS
+// optimization caches. Without this flag, the rebuild check in
+// updateUIFromNative can see an old _lastRenderedTrackCount and
+// skip the rebuild, leaving stale waveforms and a glitched
+// timeline on the next partial update.
+static std::atomic<bool> g_loadInProgress{false};
+// Monotonic generation counter, incremented before every full
+// telemetry push. Travels in the JSON payload as "gen". The JS
+// side uses it as a defense-in-depth check: if __onProjectLoaded
+// has reset caches for generation N, but a stale full update
+// from generation N-1 arrives later, the JS side ignores it. This
+// eliminates the "stale full update arrives after cache reset"
+// race that the g_loadInProgress flag alone cannot fully prevent.
+static std::atomic<uint64_t> g_telemetryGen{0};
 constexpr uint32_t kDirtyExtended = 1u << 0;
+
+// Undo/Redo history. Bounded to kUndoCapacity snapshots.
+static std::vector<std::string> g_undoStack;
+static std::vector<std::string> g_redoStack;
+static constexpr size_t kUndoCapacity = 50;
+static std::string g_currentProjectDir;
+
+static void pushUndo() {
+    if (!g_engine) return;
+    std::string snap = ProjectSerializer::saveToString(g_engine, g_currentProjectDir);
+    g_undoStack.push_back(std::move(snap));
+    if (g_undoStack.size() > kUndoCapacity) g_undoStack.erase(g_undoStack.begin());
+    g_redoStack.clear();
+}
+
+// Escape a JSON string fragment for embedding inside a single-quoted
+// JS string literal. The JSON already uses double quotes for its
+// own string fields (via escapeJson), so we only need to escape
+// backslashes and single quotes for the outer JS literal. Without
+// this, the eval "JSON.parse('...')" would break on JSON containing
+// backslash-escaped double quotes (which escapeJson emits).
+static std::string escapeForJsLiteral(const std::string& json) {
+    std::string out;
+    out.reserve(json.size() + 8);
+    for (char c : json) {
+        if (c == '\\') out += "\\\\";
+        else if (c == '\'') out += "\\'";
+        else out += c;
+    }
+    return out;
+}
+
+// Forward declarations for helper functions used by buildJsonTelemetry
+// (defined later in this file). Note: no default args here — those
+// are on the actual definitions to avoid -fpermissive warnings.
+static float safeFloat(float v, float def);
+static float safePeak(float v);
+static std::string escapeJson(const std::string& s);
+
+// Build a JSON payload for the JS telemetry push. Replaces the
+// old array-literal format which was fragile in WebKitGTK's JSC
+// eval parser (nested integer arrays with trailing/leading zeros
+// were silently truncated to [0,0,0] — see PERSISTENCE_SPEC.md
+// §"C++ → JS telemetry: JSON serialization").
+//
+// Always-sent fields (every tick): full, playing, playhead,
+// trackCount, masterPeakL/R, masterVolume, peaks.
+//
+// Full-only fields (only on kDirtyExtended ticks): volumes,
+// mutes, solos, arms, names, audioFrames, clipStarts. These are
+// the per-track structural state that drives rebuilds.
+static std::string buildJsonTelemetry(
+    AudioEngine* engine,
+    bool sendFull,
+    bool playing,
+    uint64_t ph,
+    int tc,
+    uint64_t gen)
+{
+    std::ostringstream js;
+    js.imbue(std::locale::classic());
+
+    js << "{";
+    js << "\"full\":" << (sendFull ? 1 : 0) << ",";
+    js << "\"gen\":" << gen << ",";
+    js << "\"playing\":" << (playing ? 1 : 0) << ",";
+    js << "\"playhead\":" << ph << ",";
+    js << "\"trackCount\":" << tc << ",";
+
+    auto* master = engine ? engine->getMaster() : nullptr;
+    js << "\"masterPeakL\":" << safePeak(master ? master->peakL.load(std::memory_order_relaxed) : 0.0f) << ",";
+    js << "\"masterPeakR\":" << safePeak(master ? master->peakR.load(std::memory_order_relaxed) : 0.0f) << ",";
+    js << "\"masterVolume\":" << safeFloat(master ? master->volume.load(std::memory_order_relaxed) : 1.0f, 1.0f) << ",";
+    js << "\"bpm\":" << safeFloat(engine ? engine->getBPM() : 120.0f, 120.0f) << ",";
+    js << "\"timeSigNum\":" << (engine ? engine->getTimeSigNum() : 4) << ",";
+    js << "\"timeSigDen\":" << (engine ? engine->getTimeSigDen() : 4) << ",";
+
+    // Peaks (always sent)
+    js << "\"peaks\":[";
+    for (int i = 0; i < tc; ++i) {
+        if (i > 0) js << ",";
+        Track* trk = engine ? engine->getTrack(i) : nullptr;
+        js << safePeak(std::max(trk ? trk->peakL.load(std::memory_order_relaxed) : 0.0f,
+                                 trk ? trk->peakR.load(std::memory_order_relaxed) : 0.0f));
+    }
+    js << "]";
+
+    if (sendFull) {
+        // Volumes
+        js << ",\"volumes\":[";
+        for (int i = 0; i < tc; ++i) {
+            if (i > 0) js << ",";
+            js << safeFloat(engine->getTrack(i)->volume.load(std::memory_order_relaxed), 1.0f);
+        }
+        js << "]";
+        // Mutes
+        js << ",\"mutes\":[";
+        for (int i = 0; i < tc; ++i) {
+            if (i > 0) js << ",";
+            js << (engine->getTrack(i)->muted.load(std::memory_order_relaxed) ? 1 : 0);
+        }
+        js << "]";
+        // Solos
+        js << ",\"solos\":[";
+        for (int i = 0; i < tc; ++i) {
+            if (i > 0) js << ",";
+            js << (engine->getTrack(i)->soloed.load(std::memory_order_relaxed) ? 1 : 0);
+        }
+        js << "]";
+        // Arms
+        js << ",\"arms\":[";
+        for (int i = 0; i < tc; ++i) {
+            if (i > 0) js << ",";
+            js << (engine->getTrack(i)->armed.load(std::memory_order_relaxed) ? 1 : 0);
+        }
+        js << "]";
+        // Names
+        js << ",\"names\":[";
+        for (int i = 0; i < tc; ++i) {
+            if (i > 0) js << ",";
+            js << "\"" << escapeJson(engine->getTrack(i)->name) << "\"";
+        }
+        js << "]";
+        // Audio frames (primary clip frames per track; 0 if no primary).
+        // Kept for backwards compat with the JS STATE.audioFrames array.
+        js << ",\"audioFrames\":[";
+        for (int i = 0; i < tc; ++i) {
+            if (i > 0) js << ",";
+            // CRITICAL: use memory_order_acquire here. The audio
+            // thread (in process()) uses acquire too, and
+            // loadWavToTrack uses release when storing the new
+            // buffer. The UI thread reads non-atomic fields
+            // (frames) of the buffer, so it MUST use acquire to
+            // synchronize with the writer.
+            AudioBuffer* buf = engine->getTrack(i)->audio.load(std::memory_order_acquire);
+            js << (buf ? (int64_t)buf->frames : 0);
+        }
+        js << "]";
+        // Clip starts (primary clipStart per track).
+        js << ",\"clipStarts\":[";
+        for (int i = 0; i < tc; ++i) {
+            if (i > 0) js << ",";
+            js << (int64_t)engine->getTrack(i)->clipStart.load(std::memory_order_relaxed);
+        }
+        js << "]";
+        // Multi-clip data: for each track, an array of [start, frames]
+        // pairs for ALL clips (primary + extras). The UI uses this to
+        // render every clip independently. Format:
+        //   "clipBlocks": [
+        //     [[start0, frames0], [start1, frames1], ...],  // track 0
+        //     [],                                            // track 1
+        //     ...
+        //   ]
+        js << ",\"clipBlocks\":[";
+        for (int i = 0; i < tc; ++i) {
+            if (i > 0) js << ",";
+            int n = engine->getClipCount(i);
+            js << "[";
+            for (int c = 0; c < n; ++c) {
+                if (c > 0) js << ",";
+                uint64_t s = engine->getClipStart(i, c);
+                uint64_t f = engine->getClipFrames(i, c);
+                uint64_t fi = engine->getClipFadeIn(i, c);
+                uint64_t fo = engine->getClipFadeOut(i, c);
+                js << "[" << (int64_t)s << "," << (int64_t)f << "," << (int64_t)fi << "," << (int64_t)fo << "]";
+            }
+            js << "]";
+        }
+        js << "]";
+        // Clip names (parallel to clipBlocks).
+        js << ",\"clipNames\":[";
+        for (int i = 0; i < tc; ++i) {
+            if (i > 0) js << ",";
+            int n = engine->getClipCount(i);
+            js << "[";
+            for (int c = 0; c < n; ++c) {
+                if (c > 0) js << ",";
+                std::string p = engine->getClipPath(i, c);
+                // Use just the basename
+                size_t slash = p.find_last_of("/\\");
+                std::string name = (slash != std::string::npos) ? p.substr(slash + 1) : p;
+                if (name.empty()) {
+                    // Fall back to track name
+                    name = engine->getTrack(i)->name;
+                }
+                js << "\"" << escapeJson(name) << "\"";
+            }
+            js << "]";
+        }
+        js << "]";
+        // Per-clip peak caches (parallel to clipBlocks). Used by the
+        // UI to draw the waveform of every clip independently.
+        // ALL clips (primary AND extras) get their cache serialized
+        // synchronously from the same source — no async fetch needed.
+        // This guarantees identical density for every clip piece.
+        js << ",\"clipPeakCaches\":[";
+        for (int i = 0; i < tc; ++i) {
+            if (i > 0) js << ",";
+            int n = engine->getClipCount(i);
+            js << "[";
+            for (int c = 0; c < n; ++c) {
+                if (c > 0) js << ",";
+                js << "[";
+                auto pc = engine->getClipPeakCache(i, c);
+                for (size_t p = 0; p < pc.size(); ++p) {
+                    if (p > 0) js << ",";
+                    js << safePeak(pc[p]);
+                }
+                js << "]";
+            }
+            js << "]";
+        }
+        js << "]";
+    }
+    js << "}";
+    return js.str();
+}
 
 // ── PLUGIN GUI ── (must be before uiUpdateLoop)
 struct PluginGuiState {
@@ -56,6 +293,13 @@ struct PluginGuiState {
 static std::deque<PluginGuiState> g_pluginGuis;
 static std::unordered_map<int, int> g_pluginGuisByHandle; // handle -> deque index
 static std::mutex g_pluginGuisMutex;
+// Per-(track,plugin) "is GUI open" state for builtin plugins
+// (soft clipper). The audio core used to store this in
+// PluginInstance::guiOpen, but that field was removed in the
+// bridge refactor because it was UI state leaking into the core.
+static std::unordered_map<int, bool> g_builtinGuiOpen; // key = (track << 16) | plugin
+static std::mutex g_builtinGuiOpenMutex;
+static inline int builtinKey(int t, int p) { return (t << 16) | (p & 0xFFFF); }
 static int g_nextPluginGuiHandle = 1;
 
 static std::ofstream g_logFile;
@@ -124,6 +368,11 @@ static void log(const char* level, const std::string& msg) {
 // dlog = "debug log". Writes ONLY to the log file (not stderr) so the
 // user does not have to scroll/copy-paste a console. Used for verbose
 // per-step traces in the plugin GUI open path, audio thread, etc.
+// NOTE: the audio core no longer calls dlog() — it calls
+// m_logSink->log() via the hydraw::ILogSink interface. The dlog()
+// function below is still defined for the bridge's own use (it
+// also serves as the FileLogSink's writeback helper in some
+// code paths; see Util/Logger.h).
 void dlog(const std::string& msg) {
     auto now = std::chrono::system_clock::now();
     auto t = std::chrono::system_clock::to_time_t(now);
@@ -140,8 +389,11 @@ void dlog(const std::string& msg) {
     }
 }
 
-// Returns the current thread as "0x<hex>". Used in dlog messages to
-// identify which thread is doing the work.
+// Returns the current thread as "0x<hex>". Used in bridge dlog
+// messages to identify which thread is doing the work. The audio
+// core used to have its own copy via `extern std::string threadId()`
+// but the ILogSink interface provides a thread-aware log()
+// implementation instead, so this is bridge-only.
 std::string threadId() {
     std::ostringstream o;
     o << "0x" << std::hex << (unsigned long)pthread_self();
@@ -229,6 +481,15 @@ static void uiUpdateLoop() {
         if (!g_engine || !g_wv || !g_pageReady.load(std::memory_order_acquire)) {
             continue;
         }
+        // Skip ticks while a project load is in progress. The load
+        // thread is rebuilding C++ state (tracks, plugins, audio
+        // buffers) and will dispatch __onProjectLoaded + set
+        // g_uiDirty when done. Sending telemetry mid-load would
+        // either read partial state or, worse, race with the load
+        // and leave the JS side with stale data + reset caches.
+        if (g_loadInProgress.load(std::memory_order_acquire)) {
+            continue;
+        }
 
         uint64_t ph = g_engine->getPlayhead();
         int tc = g_engine->getTrackCount();
@@ -246,99 +507,48 @@ static void uiUpdateLoop() {
         if (sendFull)
             g_uiDirty.fetch_and(~kDirtyExtended, std::memory_order_release);
 
-        std::ostringstream js;
-        js.imbue(std::locale::classic());
-        js << "updateUIFromNative(["
-           << (sendFull ? "1" : "0") << ","
-           << (playing ? "1" : "0") << "," << ph << "," << tc << ","
-           << safePeak(master ? master->peakL.load(std::memory_order_relaxed) : 0.0f) << ","
-           << safePeak(master ? master->peakR.load(std::memory_order_relaxed) : 0.0f) << ","
-           << safeFloat(master ? master->volume.load(std::memory_order_relaxed) : 1.0f, 1.0f);
-        // Track peaks (always sent)
-        js << ",[";
-        for (int i = 0; i < tc; ++i) {
-            if (i > 0) js << ",";
-            Track* trk = g_engine->getTrack(i);
-            js << safePeak(std::max(trk ? trk->peakL.load(std::memory_order_relaxed) : 0.0f,
-                                     trk ? trk->peakR.load(std::memory_order_relaxed) : 0.0f));
-        }
-        js << "]";
+        // Bump the generation counter on every full push. The JS
+        // side stores the last seen gen and ignores stale full
+        // updates that belong to a generation whose caches have
+        // already been reset (e.g. by a subsequent __onProjectLoaded).
+        uint64_t gen = sendFull ? g_telemetryGen.fetch_add(1, std::memory_order_acq_rel) + 1
+                                : g_telemetryGen.load(std::memory_order_acquire);
 
+        // Build a JSON payload (not an array literal — JSC's array
+        // literal parser has bugs with nested integer arrays that
+        // drop elements to [0,0,0]). See PERSISTENCE_SPEC.md.
+        std::string jsonBody = buildJsonTelemetry(g_engine, sendFull, playing, ph, tc, gen);
+        std::string jsBody = "updateUIFromNative(JSON.parse('" + escapeForJsLiteral(jsonBody) + "'))";
+
+        // DIAGNOSTIC: log the full payload once on the first full send
+        // so we can verify the JSON is well-formed and audioFrames
+        // is present in the object.
         if (sendFull) {
-            // Volumes
-            js << ",[";
-            for (int i = 0; i < tc; ++i) {
-                if (i > 0) js << ",";
-                js << safeFloat(g_engine->getTrack(i)->volume.load(std::memory_order_relaxed), 1.0f);
+            static int s_diagCount = 0;
+            if (s_diagCount < 3) {
+                ++s_diagCount;
+                log("DBUG", "uiUpdateLoop full payload (tc=" + std::to_string(tc) +
+                     ", gen=" + std::to_string(gen) +
+                     ", len=" + std::to_string(jsBody.size()) + "): " + jsBody);
             }
-            // Mutes
-            js << "],[";
-            for (int i = 0; i < tc; ++i) {
-                if (i > 0) js << ",";
-                js << (g_engine->getTrack(i)->muted.load(std::memory_order_relaxed) ? "1" : "0");
-            }
-            // Solos
-            js << "],[";
-            for (int i = 0; i < tc; ++i) {
-                if (i > 0) js << ",";
-                js << (g_engine->getTrack(i)->soloed.load(std::memory_order_relaxed) ? "1" : "0");
-            }
-            // Arms
-            js << "],[";
-            for (int i = 0; i < tc; ++i) {
-                if (i > 0) js << ",";
-                js << (g_engine->getTrack(i)->armed.load(std::memory_order_relaxed) ? "1" : "0");
-            }
-            // Names
-            js << "],[";
-            for (int i = 0; i < tc; ++i) {
-                if (i > 0) js << ",";
-                js << "\"" << escapeJson(g_engine->getTrack(i)->name) << "\"";
-            }
-            // Audio frames
-            js << "],[";
-            for (int i = 0; i < tc; ++i) {
-                if (i > 0) js << ",";
-                AudioBuffer* buf = g_engine->getTrack(i)->audio.load(std::memory_order_relaxed);
-                js << (buf ? (int64_t)buf->frames : 0);
-            }
-            // Clip starts
-            js << "],[";
-            for (int i = 0; i < tc; ++i) {
-                if (i > 0) js << ",";
-                js << (int64_t)g_engine->getTrack(i)->clipStart.load(std::memory_order_relaxed);
-             }
-         }
-         js << "])";
+        }
 
-         // DIAGNOSTIC: log the full payload once on the first full send
-         // so we can verify the audioFrames array length matches tc.
-         if (sendFull) {
-             static int s_diagCount = 0;
-             if (s_diagCount < 3) {
-                 ++s_diagCount;
-                 std::string fullStr = js.str();
-                 log("DBUG", "uiUpdateLoop full payload (tc=" + std::to_string(tc) +
-                      ", len=" + std::to_string(fullStr.size()) + "): " + fullStr);
-             }
-         }
-
-         // Direct eval from the UI thread. The webview library's eval_impl
-         // calls webkit_web_view_evaluate_javascript which IS thread-safe
-         // in WebKitGTK 2.x (it marshals to the main thread internally).
-         // We must guard against g_wv being null AND against the webview
-         // main loop being dead (after w.run() returns). If the eval
-         // would block, we just skip this tick — the UI thread will exit
-         // at the next g_running check.
-         if (g_wv) {
-             // Wrap the eval so we never block the UI thread. The eval
-             // itself is async in WebKit 2.40+, but the underlying GDK
-             // send_event can deadlock if the main loop has exited.
-             g_wv->dispatch([jsStr = js.str()]() {
-                 if (g_wv) {
-                     g_wv->eval(jsStr);
-                 }
-             });
+        // Direct eval from the UI thread. The webview library's eval_impl
+        // calls webkit_web_view_evaluate_javascript which IS thread-safe
+        // in WebKitGTK 2.x (it marshals to the main thread internally).
+        // We must guard against g_wv being null AND against the webview
+        // main loop being dead (after w.run() returns). If the eval
+        // would block, we just skip this tick — the UI thread will exit
+        // at the next g_running check.
+        if (g_wv) {
+            // Wrap the eval so we never block the UI thread. The eval
+            // itself is async in WebKit 2.40+, but the underlying GDK
+            // send_event can deadlock if the main loop has exited.
+            g_wv->dispatch([jsStr = std::move(jsBody)]() {
+                if (g_wv) {
+                    g_wv->eval(jsStr);
+                }
+            });
         }
 
         // Fire plugin timers. CRITICAL: plugin->get_extension() and
@@ -369,7 +579,17 @@ static void uiUpdateLoop() {
         }), nullptr);
 
         // Process pending flush requests from plugins (parameter sync)
-        PluginChain::processPendingFlushes();
+        if (g_engine) {
+            std::vector<PluginChain*> chains;
+            int tc = g_engine->getTrackCount();
+            for (int i = 0; i < tc; ++i) {
+                PluginChain* c = g_engine->getPluginChain(i);
+                if (c) chains.push_back(c);
+            }
+            PluginChain* m = g_engine->getPluginChain(-1);
+            if (m) chains.push_back(m);
+            PluginChain::processPendingFlushes(chains);
+        }
     }
 }
 
@@ -520,22 +740,15 @@ static std::string nativeSetSoftClipperDrive(const std::string& req) {
     return "null";
 }
 
-// Format: "trackIdx,pluginIdx" → returns drive as string
-static std::string nativeGetSoftClipperDrive(const std::string& req) {
-    std::string a = unwrapArg(req);
-    auto p1 = a.find(',');
-    if (p1 == std::string::npos || !g_engine) return "1.0";
-    int trackIdx = safeStoi(a.substr(0, p1));
-    int pluginIdx = safeStoi(a.substr(p1 + 1));
-    PluginChain* chain = g_engine->getPluginChain(trackIdx);
-    if (chain) return std::to_string(chain->getDrive(pluginIdx));
-    return "1.0";
-}
-
 // ── PROJECT / EXPORT ──
 static std::string nativeSaveProject(const std::string& req) {
     std::string path = unwrapArg(req);
     bool ok = g_engine ? ProjectSerializer::save(path.c_str(), g_engine) : false;
+    if (ok) {
+        // Track project dir for undo/redo
+        std::filesystem::path p(path);
+        g_currentProjectDir = p.parent_path().string();
+    }
     log("SYS", "saveProject -> " + path + " " + (ok ? "OK" : "FAIL"));
     return ok ? "\"OK\"" : "\"FAIL\"";
 }
@@ -544,29 +757,69 @@ static std::string nativeLoadProject(const std::string& req) {
     std::string path = unwrapArg(req);
     if (!g_engine) return "\"FAIL\"";
 
-    // Hydration sync order:
-    //   1. Stop audio engine (no more callbacks)
-    //   2. Drain any remaining deferred deletes (safe with audio thread stopped)
-    //   3. Load project file → rebuild C++ state
-    //   4. Flag UI for full refresh
-    //   5. Restart audio engine
+    // Strict Sequential Hydration (see PERSISTENCE_SPEC.md):
+    //   1. Set g_loadInProgress — UI update thread will skip ticks.
+    //   2. Stop audio device — no more audio callbacks. Required for
+    //      thread safety: removeTrack swaps m_pluginChains[] which
+    //      the audio thread dereferences, and CLAP's stop_processing
+    //      is [audio-thread] and must not be called from main.
+    //   3. Drain pending deletes from previous sessions.
+    //   4. Load the project — rebuild C++ state.
+    //   5. Restart audio device.
+    //   6. Dispatch __onProjectLoaded (resets JS caches).
+    //   7. Set g_uiDirty so the next UI tick sends a full update
+    //      (which will see the reset caches and trigger a rebuild).
+    //   8. Clear g_loadInProgress LAST so the UI thread sees both
+    //      g_loadInProgress=false AND g_uiDirty=1 on its next tick.
+
+    g_loadInProgress.store(true, std::memory_order_release);
 
     log("SYS", "loadProject: stopping audio engine...");
     g_engine->stop();
     PluginChain::drainPendingDeletes();
     g_engine->drainPendingAudioBufferDeletes();
+    // Track project dir for undo/redo
+    g_currentProjectDir = std::filesystem::path(path).parent_path().string();
+    // Clear history — a project load is a new starting point.
+    g_undoStack.clear();
+    g_redoStack.clear();
 
     log("SYS", "loadProject: loading " + path);
     bool ok = ProjectSerializer::load(path.c_str(), g_engine);
 
+    g_engine->start();
+
     if (ok) {
-        log("SYS", "loadProject: OK, restarting audio engine");
+        log("SYS", "loadProject: OK, dispatching __onProjectLoaded");
+        // Bump the generation counter BEFORE dispatching
+        // __onProjectLoaded. The JS side stores this gen as the
+        // "current" generation. Any subsequent full update from
+        // C++ will carry gen+1. If a stale full update from
+        // gen-1 (queued before the load) is still in flight, the
+        // JS side will see its gen < current and ignore it. This
+        // is the defense-in-depth against the rare race where
+        // g_loadInProgress is cleared before the main loop has
+        // processed the queued __onProjectLoaded.
+        uint64_t loadGen = g_telemetryGen.fetch_add(1, std::memory_order_acq_rel) + 1;
+        if (g_wv) {
+            g_wv->dispatch([loadGen]() {
+                if (g_wv) {
+                    std::string js = "window.__onProjectLoaded && window.__onProjectLoaded(" +
+                                     std::to_string(loadGen) + ")";
+                    g_wv->eval(js);
+                }
+            });
+        }
         g_uiDirty.fetch_or(kDirtyExtended, std::memory_order_release);
     } else {
-        log("SYS", "loadProject: FAILED, restarting audio engine with current state");
+        log("SYS", "loadProject: FAILED, restarting with current state");
     }
 
-    g_engine->start();
+    // Order matters: clear the flag AFTER dispatching the eval
+    // and setting g_uiDirty, so the UI thread's next tick sees
+    // both g_loadInProgress=false and g_uiDirty=1.
+    g_loadInProgress.store(false, std::memory_order_release);
+
     return ok ? "\"OK\"" : "\"FAIL\"";
 }
 
@@ -602,6 +855,8 @@ static std::string nativeExportAudio(const std::string& req) {
     return "\"PENDING\"";
 }
 
+// Transport bindings. The JS UI's play/pause/stop buttons call
+// these via cn('nativePlay'|'nativePause'|'nativeStop', '').
 static std::string nativePlay(const std::string&) {
     log("AUDIO", "play");
     if (g_engine) g_engine->play();
@@ -626,6 +881,144 @@ static std::string nativeSetPlayhead(const std::string& req) {
     log("AUDIO", "setPlayhead " + std::to_string(pos));
     if (g_engine) g_engine->setPlayhead(pos);
     return "null";
+}
+
+static std::string nativeSetBPM(const std::string& req) {
+    std::string a = unwrapArg(req);
+    float bpm = safeStof(a);
+    if (bpm < 20.0f) bpm = 20.0f;
+    if (bpm > 300.0f) bpm = 300.0f;
+    if (g_engine) g_engine->setBPM(bpm);
+    return std::to_string(bpm);
+}
+
+static std::string nativeSetTimeSignature(const std::string& req) {
+    std::string a = unwrapArg(req);
+    int comma = (int)a.find(',');
+    int num = 4, den = 4;
+    if (comma >= 0) {
+        num = safeStoi(a.substr(0, comma));
+        den = safeStoi(a.substr(comma + 1));
+    } else {
+        num = safeStoi(a);
+    }
+    if (g_engine) g_engine->setTimeSignature(num, den);
+    return std::to_string(num) + "/" + std::to_string(den);
+}
+
+static std::string nativeSetLoopEnabled(const std::string& req) {
+    std::string a = unwrapArg(req);
+    bool en = a == "1" || a == "true";
+    if (g_engine) g_engine->setLoopEnabled(en);
+    g_uiDirty.fetch_or(kDirtyExtended, std::memory_order_release);
+    return "null";
+}
+
+static std::string nativeSetLoopRange(const std::string& req) {
+    std::string a = unwrapArg(req);
+    auto p = a.find(',');
+    if (p == std::string::npos || !g_engine) return "null";
+    uint64_t s = (uint64_t)std::max(0, safeStoi(a.substr(0, p)));
+    uint64_t e = (uint64_t)std::max(0, safeStoi(a.substr(p + 1)));
+    g_engine->setLoopRange(s, e);
+    g_uiDirty.fetch_or(kDirtyExtended, std::memory_order_release);
+    return "null";
+}
+
+static std::string nativeSetPunchRange(const std::string& req) {
+    std::string a = unwrapArg(req);
+    auto p = a.find(',');
+    if (p == std::string::npos || !g_engine) return "null";
+    uint64_t s = (uint64_t)std::max(0, safeStoi(a.substr(0, p)));
+    uint64_t e = (uint64_t)std::max(0, safeStoi(a.substr(p + 1)));
+    g_engine->setPunchRange(s, e);
+    g_uiDirty.fetch_or(kDirtyExtended, std::memory_order_release);
+    return "null";
+}
+
+static std::string nativeStartRecording(const std::string& req) {
+    std::string a = unwrapArg(req);
+    auto p = a.find(',');
+    if (p == std::string::npos || !g_engine) return "false";
+    int track = safeStoi(a.substr(0, p));
+    std::string path = a.substr(p + 1);
+    g_engine->startRecording(track, path.c_str());
+    log("REC", "startRecording track=" + std::to_string(track) + " path=" + path);
+    g_uiDirty.fetch_or(kDirtyExtended, std::memory_order_release);
+    return "true";
+}
+
+static std::string nativeStopRecording(const std::string&) {
+    if (g_engine) {
+        g_engine->stopRecording();
+        log("REC", "stopRecording");
+    }
+    g_uiDirty.fetch_or(kDirtyExtended, std::memory_order_release);
+    return "true";
+}
+
+static std::string nativeFreezeTrack(const std::string& req) {
+    int track = safeStoi(unwrapArg(req));
+    if (g_engine) {
+        g_engine->freezeTrack(track);
+        log("FREEZE", "track=" + std::to_string(track));
+    }
+    g_uiDirty.fetch_or(kDirtyExtended, std::memory_order_release);
+    return "null";
+}
+
+static std::string nativeUnfreezeTrack(const std::string& req) {
+    int track = safeStoi(unwrapArg(req));
+    if (g_engine) {
+        g_engine->unfreezeTrack(track);
+        log("FREEZE", "unfreeze track=" + std::to_string(track));
+    }
+    g_uiDirty.fetch_or(kDirtyExtended, std::memory_order_release);
+    return "null";
+}
+
+static std::string nativeGetPluginParams(const std::string& req) {
+    std::string a = unwrapArg(req);
+    auto p = a.find(',');
+    if (p == std::string::npos || !g_engine) return "[]";
+    int track = safeStoi(a.substr(0, p));
+    int plugin = safeStoi(a.substr(p + 1));
+    PluginChain* chain = g_engine->getPluginChain(track);
+    if (!chain) return "[]";
+    auto params = chain->getPluginParams(plugin);
+    std::ostringstream o;
+    o << "[";
+    for (size_t i = 0; i < params.size(); ++i) {
+        if (i > 0) o << ",";
+        o << "{\"id\":" << params[i].id
+          << ",\"name\":\"" << params[i].name << "\""
+          << ",\"min\":" << params[i].min
+          << ",\"max\":" << params[i].max
+          << ",\"default\":" << params[i].defaultValue
+          << ",\"value\":" << params[i].value
+          << ",\"automatable\":" << (params[i].isAutomatable ? "true" : "false")
+          << "}";
+    }
+    o << "]";
+    return o.str();
+}
+
+static std::string nativeSetPluginParam(const std::string& req) {
+    std::string a = unwrapArg(req);
+    auto p1 = a.find(',');
+    if (p1 == std::string::npos || !g_engine) return "false";
+    auto p2 = a.find(',', p1 + 1);
+    if (p2 == std::string::npos) return "false";
+    auto p3 = a.find(',', p2 + 1);
+    if (p3 == std::string::npos) return "false";
+    int track = safeStoi(a.substr(0, p1));
+    int plugin = safeStoi(a.substr(p1 + 1, p2 - p1 - 1));
+    uint32_t paramId = (uint32_t)safeStoi(a.substr(p2 + 1, p3 - p2 - 1));
+    double val = safeStof(a.substr(p3 + 1));
+    PluginChain* chain = g_engine->getPluginChain(track);
+    if (!chain) return "false";
+    bool ok = chain->setPluginParam(plugin, paramId, val);
+    return ok ? "true" : "false";
 }
 
 static std::string nativeAddTrack(const std::string&) {
@@ -676,34 +1069,186 @@ static std::string nativeSetMasterVolume(const std::string& req) {
     return "null";
 }
 
+static std::string nativeSetSendLevel(const std::string& req) {
+    std::string a = unwrapArg(req);
+    auto p1 = a.find(',');
+    if (p1 == std::string::npos || !g_engine) return "null";
+    auto p2 = a.find(',', p1 + 1);
+    if (p2 == std::string::npos) return "null";
+    int track = safeStoi(a.substr(0, p1));
+    int bus = safeStoi(a.substr(p1 + 1, p2 - p1 - 1));
+    float val = safeStof(a.substr(p2 + 1), 0.0f);
+    g_engine->setSendLevel(track, bus, val);
+    g_uiDirty.fetch_or(kDirtyExtended, std::memory_order_release);
+    return "null";
+}
+
+static std::string nativeSetAuxVolume(const std::string& req) {
+    std::string a = unwrapArg(req);
+    auto p = a.find(',');
+    if (p == std::string::npos || !g_engine) return "null";
+    int bus = safeStoi(a.substr(0, p));
+    float val = safeStof(a.substr(p + 1), 1.0f);
+    AuxBus* ab = g_engine->getAuxBus(bus);
+    if (ab) ab->volume.store(val, std::memory_order_relaxed);
+    g_uiDirty.fetch_or(kDirtyExtended, std::memory_order_release);
+    return "null";
+}
+
 static std::string nativeSetClipStart(const std::string& req) {
     std::string a = unwrapArg(req);
     auto pos = a.find(',');
     if (pos == std::string::npos || !g_engine) return "null";
-    int idx = safeStoi(a.substr(0, pos));
-    uint64_t clipStart = (uint64_t)std::max(0, safeStoi(a.substr(pos + 1)));
-    g_engine->setClipStart(idx, clipStart);
-    log("TIMELINE", "setClipStart track=" + std::to_string(idx) + " pos=" + std::to_string(clipStart));
+    auto pos2 = a.find(',', pos + 1);
+    if (pos2 == std::string::npos) {
+        // Legacy: "track,pos" — primary only
+        int idx = safeStoi(a.substr(0, pos));
+        uint64_t clipStart = (uint64_t)std::max(0, safeStoi(a.substr(pos + 1)));
+        g_engine->setClipStart(idx, clipStart);
+        log("TIMELINE", "setClipStart track=" + std::to_string(idx) + " pos=" + std::to_string(clipStart));
+    } else {
+        // Multi: "track,clipIdx,pos"
+        int idx = safeStoi(a.substr(0, pos));
+        int clipIdx = safeStoi(a.substr(pos + 1, pos2 - pos - 1));
+        uint64_t clipStart = (uint64_t)std::max(0, safeStoi(a.substr(pos2 + 1)));
+        g_engine->setClipStart(idx, clipIdx, clipStart);
+        log("TIMELINE", "setClipStart track=" + std::to_string(idx) + " clip=" + std::to_string(clipIdx) + " pos=" + std::to_string(clipStart));
+    }
     g_uiDirty.fetch_or(kDirtyExtended, std::memory_order_release);
     return "null";
 }
 
 static std::string nativeMoveClip(const std::string& req) {
     std::string a = unwrapArg(req);
-    auto pos1 = a.find(',');
-    if (pos1 == std::string::npos || !g_engine) return "null";
-    auto pos2 = a.find(',', pos1 + 1);
-    if (pos2 == std::string::npos) return "null";
-    int src = safeStoi(a.substr(0, pos1));
-    int dst = safeStoi(a.substr(pos1 + 1, pos2 - pos1 - 1));
-    uint64_t clipStart = (uint64_t)std::max(0, safeStoi(a.substr(pos2 + 1)));
-    if (src == dst) {
-        g_engine->setClipStart(src, clipStart);
+    // Legacy: "src,dst,pos" — single-clip cross-track
+    // Multi: "srcTrack,srcClip,dstTrack,dstIndex,pos"
+    auto p1 = a.find(',');
+    if (p1 == std::string::npos || !g_engine) return "null";
+    auto p2 = a.find(',', p1 + 1);
+    if (p2 == std::string::npos) return "null";
+    auto p3 = a.find(',', p2 + 1);
+    if (p3 == std::string::npos) {
+        int src = safeStoi(a.substr(0, p1));
+        int dst = safeStoi(a.substr(p1 + 1, p2 - p1 - 1));
+        uint64_t clipStart = (uint64_t)std::max(0, safeStoi(a.substr(p2 + 1)));
+        if (src == dst) {
+            g_engine->setClipStart(src, clipStart);
+        } else {
+            g_engine->moveTrackAudio(src, dst);
+            g_engine->setClipStart(dst, clipStart);
+        }
+        log("TIMELINE", "moveClip legacy src=" + std::to_string(src) + " dst=" + std::to_string(dst) + " pos=" + std::to_string(clipStart));
     } else {
-        g_engine->moveTrackAudio(src, dst);
-        g_engine->setClipStart(dst, clipStart);
+        auto p4 = a.find(',', p3 + 1);
+        if (p4 == std::string::npos) return "null";
+        int srcTrack = safeStoi(a.substr(0, p1));
+        int srcClip = safeStoi(a.substr(p1 + 1, p2 - p1 - 1));
+        int dstTrack = safeStoi(a.substr(p2 + 1, p3 - p2 - 1));
+        int dstIndex = safeStoi(a.substr(p3 + 1, p4 - p3 - 1));
+        uint64_t clipStart = (uint64_t)std::max(0, safeStoi(a.substr(p4 + 1)));
+        if (srcTrack == dstTrack && srcClip == dstIndex) {
+            g_engine->setClipStart(srcTrack, srcClip, clipStart);
+        } else {
+            g_engine->moveClip(srcTrack, srcClip, dstTrack, dstIndex, clipStart);
+        }
+        log("TIMELINE", "moveClip multi src=" + std::to_string(srcTrack) + ":" + std::to_string(srcClip) +
+                          " dst=" + std::to_string(dstTrack) + ":" + std::to_string(dstIndex) +
+                          " pos=" + std::to_string(clipStart));
     }
-    log("TIMELINE", "moveClip src=" + std::to_string(src) + " dst=" + std::to_string(dst) + " pos=" + std::to_string(clipStart));
+    g_uiDirty.fetch_or(kDirtyExtended, std::memory_order_release);
+    return "null";
+}
+
+static std::string nativeAddClip(const std::string& req) {
+    std::string a = unwrapArg(req);
+    auto p1 = a.find(',');
+    if (p1 == std::string::npos || !g_engine) return "-1";
+    int track = safeStoi(a.substr(0, p1));
+    auto p2 = a.find(',', p1 + 1);
+    std::string path;
+    uint64_t start = 0;
+    if (p2 == std::string::npos) {
+        path = a.substr(p1 + 1);
+    } else {
+        path = a.substr(p1 + 1, p2 - p1 - 1);
+        start = (uint64_t)std::max(0, safeStoi(a.substr(p2 + 1)));
+    }
+    int idx = g_engine->addClip(track, path.c_str(), start);
+    log("TIMELINE", "addClip track=" + std::to_string(track) + " idx=" + std::to_string(idx) + " path=" + path);
+    g_uiDirty.fetch_or(kDirtyExtended, std::memory_order_release);
+    return std::to_string(idx);
+}
+
+static std::string nativeRemoveClip(const std::string& req) {
+    std::string a = unwrapArg(req);
+    auto p = a.find(',');
+    if (p == std::string::npos || !g_engine) return "false";
+    int track = safeStoi(a.substr(0, p));
+    int clip = safeStoi(a.substr(p + 1));
+    bool ok = g_engine->removeClip(track, clip);
+    log("TIMELINE", "removeClip track=" + std::to_string(track) + " clip=" + std::to_string(clip));
+    g_uiDirty.fetch_or(kDirtyExtended, std::memory_order_release);
+    return ok ? "true" : "false";
+}
+
+static std::string nativeSplitClip(const std::string& req) {
+    std::string a = unwrapArg(req);
+    auto p1 = a.find(',');
+    if (p1 == std::string::npos || !g_engine) return "-1";
+    auto p2 = a.find(',', p1 + 1);
+    if (p2 == std::string::npos) return "-1";
+    int track = safeStoi(a.substr(0, p1));
+    int clip = safeStoi(a.substr(p1 + 1, p2 - p1 - 1));
+    uint64_t pos = (uint64_t)std::max(0, safeStoi(a.substr(p2 + 1)));
+    int idx = g_engine->splitClipAt(track, clip, pos);
+    log("TIMELINE", "splitClip track=" + std::to_string(track) + " clip=" + std::to_string(clip) +
+                    " pos=" + std::to_string(pos) + " newIdx=" + std::to_string(idx));
+    g_uiDirty.fetch_or(kDirtyExtended, std::memory_order_release);
+    return std::to_string(idx);
+}
+
+static std::string nativeTrimClip(const std::string& req) {
+    std::string a = unwrapArg(req);
+    auto p1 = a.find(',');
+    if (p1 == std::string::npos || !g_engine) return "false";
+    auto p2 = a.find(',', p1 + 1);
+    if (p2 == std::string::npos) return "false";
+    auto p3 = a.find(',', p2 + 1);
+    if (p3 == std::string::npos) return "false";
+    int track = safeStoi(a.substr(0, p1));
+    int clip = safeStoi(a.substr(p1 + 1, p2 - p1 - 1));
+    uint64_t newStart = (uint64_t)std::max(0, safeStoi(a.substr(p2 + 1, p3 - p2 - 1)));
+    uint64_t newEnd = (uint64_t)std::max(0, safeStoi(a.substr(p3 + 1)));
+    bool ok = g_engine->trimClip(track, clip, newStart, newEnd);
+    log("TIMELINE", "trimClip track=" + std::to_string(track) + " clip=" + std::to_string(clip));
+    g_uiDirty.fetch_or(kDirtyExtended, std::memory_order_release);
+    return ok ? "true" : "false";
+}
+
+static std::string nativeSetFadeIn(const std::string& req) {
+    std::string a = unwrapArg(req);
+    auto p1 = a.find(',');
+    if (p1 == std::string::npos || !g_engine) return "null";
+    auto p2 = a.find(',', p1 + 1);
+    if (p2 == std::string::npos) return "null";
+    int track = safeStoi(a.substr(0, p1));
+    int clip = safeStoi(a.substr(p1 + 1, p2 - p1 - 1));
+    uint64_t samples = (uint64_t)std::max(0, safeStoi(a.substr(p2 + 1)));
+    g_engine->setClipFadeIn(track, clip, samples);
+    g_uiDirty.fetch_or(kDirtyExtended, std::memory_order_release);
+    return "null";
+}
+
+static std::string nativeSetFadeOut(const std::string& req) {
+    std::string a = unwrapArg(req);
+    auto p1 = a.find(',');
+    if (p1 == std::string::npos || !g_engine) return "null";
+    auto p2 = a.find(',', p1 + 1);
+    if (p2 == std::string::npos) return "null";
+    int track = safeStoi(a.substr(0, p1));
+    int clip = safeStoi(a.substr(p1 + 1, p2 - p1 - 1));
+    uint64_t samples = (uint64_t)std::max(0, safeStoi(a.substr(p2 + 1)));
+    g_engine->setClipFadeOut(track, clip, samples);
     g_uiDirty.fetch_or(kDirtyExtended, std::memory_order_release);
     return "null";
 }
@@ -795,25 +1340,41 @@ static std::string nativeGetPeakCache(const std::string& req) {
     if (!g_engine) return "[]";
     int idx = safeStoi(unwrapArg(req));
     Track* t = g_engine->getTrack(idx);
-    AudioBuffer* buf = t ? t->audio.load(std::memory_order_relaxed) : nullptr;
+    // Acquire load: synchronize with the release store in
+    // loadWavToTrack so we see the up-to-date frames and
+    // dataL/dataR vectors. (See comment in uiUpdateLoop for the
+    // full rationale.)
+    AudioBuffer* buf = t ? t->audio.load(std::memory_order_acquire) : nullptr;
     if (!buf || buf->frames == 0) {
         log("WAV", "getPeakCache idx=" + std::to_string(idx) + " no buffer or zero frames");
         return "[]";
     }
-    if (buf->peakCache.empty()) {
-        int numP = std::max(100, (int)(buf->frames / 600));
-        buf->peakCache.resize(numP);
-        for (int p = 0; p < numP; ++p) {
-            uint64_t s = (uint64_t)p * buf->frames / numP;
-            uint64_t e = (uint64_t)(p + 1) * buf->frames / numP;
-            if (e > buf->frames) e = buf->frames;
-            if (e <= s) e = s + 1;
-            float pk = 0.0f;
-            for (uint64_t i = s; i < e; ++i) {
-                pk = std::max(pk, std::abs(buf->dataL[i]));
-                pk = std::max(pk, std::abs(buf->dataR[i]));
+    // Always recompute the peak cache to guarantee consistent
+    // temporal resolution (~10ms) regardless of when the buffer
+    // was created. Caches pre-computed by loadWavToTrack/addClip/
+    // splitClipAt/etc. could carry a different formula version.
+    // Re-computation is O(frames) but only runs once per JS-side
+    // cache invalidation — typical clips complete in <10ms.
+    {
+        size_t expectedNumP = (size_t)(buf->frames / 256);
+        if (expectedNumP < 1) expectedNumP = 1;
+        bool stale = buf->peakCache.empty() || buf->peakCache.size() != expectedNumP;
+        if (stale) {
+            buf->peakCache.clear();
+            buf->peakCache.resize(expectedNumP);
+            size_t numP = expectedNumP;
+            for (size_t p = 0; p < numP; ++p) {
+                size_t s = (size_t)((uint64_t)p * buf->frames / numP);
+                size_t e = (size_t)((uint64_t)(p + 1) * buf->frames / numP);
+                if (e > (size_t)buf->frames) e = (size_t)buf->frames;
+                if (e <= s) e = s + 1;
+                float pk = 0.0f;
+                for (size_t i = s; i < e; ++i) {
+                    pk = std::max(pk, std::abs(buf->dataL[i]));
+                    pk = std::max(pk, std::abs(buf->dataR[i]));
+                }
+                buf->peakCache[p] = pk;
             }
-            buf->peakCache[p] = pk;
         }
     }
     std::ostringstream js;
@@ -892,23 +1453,7 @@ static std::string nativePluginList(const std::string& req) {
     return js.str();
 }
 
-static std::string nativePluginBypass(const std::string& req) {
-    std::string a = unwrapArg(req);
-    auto p1 = a.find(',');
-    if (p1 == std::string::npos || !g_engine) return "null";
-    int trackIdx = safeStoi(a.substr(0, p1));
-    auto p2 = a.find(',', p1 + 1);
-    int pluginIdx = safeStoi(a.substr(p1 + 1, p2 - p1 - 1));
-    bool bp = (a.substr(p2 + 1) == "1");
-    PluginChain* chain = g_engine->getPluginChain(trackIdx);
-    if (chain) {
-        chain->setBypass(pluginIdx, bp);
-        log("PLUGIN", "bypass track=" + std::to_string(trackIdx) +
-            " plugin=" + std::to_string(pluginIdx) + " bp=" + (bp ? "1" : "0"));
-    }
-    g_uiDirty.fetch_or(kDirtyExtended, std::memory_order_release);
-    return "null";
-}
+// nativePluginBypass was removed (dead binding — JS does not call it).
 
 // Forward declarations for GUI helpers (defined later in this file)
 static PluginGuiState* findPluginGui(int trackIdx, int pluginIdx);
@@ -932,44 +1477,10 @@ static void closeAllPluginGuis() {
     for (auto* w : windows) gtk_widget_destroy(w);
 }
 
-static std::string nativePluginRemove(const std::string& req) {
-    std::string a = unwrapArg(req);
-    auto pos = a.find(',');
-    if (pos == std::string::npos || !g_engine) return "null";
-    int trackIdx = safeStoi(a.substr(0, pos));
-    int pluginIdx = safeStoi(a.substr(pos + 1));
-    PluginChain* chain = g_engine->getPluginChain(trackIdx);
-    if (chain) {
-        // Close GUI if open before removing the plugin. We need to do the
-        // CLAP destroy calls outside the GUI mutex to avoid a deadlock with
-        // the host callbacks (request_resize etc.) that also take it.
-        int handle = -1;
-        {
-            std::lock_guard<std::mutex> lk(g_pluginGuisMutex);
-            for (const auto& g : g_pluginGuis) {
-                if (g.trackIdx == trackIdx && g.pluginIdx == pluginIdx) {
-                    handle = g.handle;
-                    break;
-                }
-            }
-        }
-        if (handle > 0) {
-            PluginGuiState stolen;
-            if (erasePluginGuiByHandle(handle, &stolen)) {
-                if (stolen.plugin) {
-                    if (stolen.gui && stolen.gui->hide)  stolen.gui->hide(stolen.plugin);
-                    if (stolen.gui && stolen.gui->destroy) stolen.gui->destroy(stolen.plugin);
-                }
-                if (stolen.window) gtk_widget_destroy(stolen.window);
-            }
-        }
-        chain->removePlugin(pluginIdx);
-        log("PLUGIN", "remove track=" + std::to_string(trackIdx) +
-            " plugin=" + std::to_string(pluginIdx));
-    }
-    g_uiDirty.fetch_or(kDirtyExtended, std::memory_order_release);
-    return "null";
-}
+// nativePluginRemove was removed (dead binding — JS does not call it).
+// Plugin removal in the live app would go through a future bridge-side
+// method. For now, plugins are removed only by loading a new project
+// (which clears all tracks).
 
 static std::string nativePluginMove(const std::string& req) {
     std::string a = unwrapArg(req);
@@ -1011,6 +1522,7 @@ static std::string nativePluginMove(const std::string& req) {
     }
     log("PLUGIN", "move track=" + std::to_string(trackIdx) +
         " from=" + std::to_string(from) + " to=" + std::to_string(to));
+    g_engine->rebuildLatencyMap();
     g_uiDirty.fetch_or(kDirtyExtended, std::memory_order_release);
     return "null";
 }
@@ -1030,6 +1542,7 @@ static std::string nativePluginLoad(const std::string& req) {
     if (!chain) return "false";
     bool ok = chain->addPlugin(libPath.c_str(), pluginId.c_str());
     log("PLUGIN", "load -> " + std::string(ok ? "OK" : "FAIL"));
+    if (ok) g_engine->rebuildLatencyMap();
     g_uiDirty.fetch_or(kDirtyExtended, std::memory_order_release);
     return ok ? "true" : "false";
 }
@@ -1221,7 +1734,26 @@ static void clap_host_gui_closed(const clap_host_t* host, bool was_destroyed) {
     }), GINT_TO_POINTER(payload));
 }
 
-extern const clap_host_gui_t s_hostGui = {
+// ── Bridge-side IHostExtensions implementation ──
+// The audio core's PluginChain looks up CLAP host extensions via
+// the IHostExtensions interface. The bridge provides the GUI
+// extension (which is bridge-side: it touches GTK/X11 to host the
+// plugin's UI). The other extensions (timer, log, params,
+// thread-check) live in the audio core; this provider returns null
+// for them so the core falls back to its own implementations.
+class BridgeHostExtensions : public hydraw::IHostExtensions {
+public:
+    const void* getExtension(const char* id) const noexcept override {
+        if (std::strcmp(id, CLAP_EXT_GUI) == 0) return &s_bridgeHostGui;
+        return nullptr;
+    }
+private:
+    // Trampoline: each C function pointer below is a thin wrapper
+    // around the file-scope C functions declared above. They
+    // operate on the global g_pluginGuis state.
+    static const clap_host_gui_t s_bridgeHostGui;
+};
+const clap_host_gui_t BridgeHostExtensions::s_bridgeHostGui = {
     clap_host_gui_resize_hints_changed,
     clap_host_request_resize,
     clap_host_request_show,
@@ -1229,6 +1761,15 @@ extern const clap_host_gui_t s_hostGui = {
     clap_host_gui_closed
 };
 
+// The bridge creates a single instance and passes it to the
+// audio engine. The audio engine passes it to each PluginChain.
+static BridgeHostExtensions g_bridgeHostExtensions;
+
+// nativePluginShowGUI is called by index.html in two places:
+//   1. Clicking a plugin name in the FX chain list (line 1537) opens
+//      or toggles the plugin's GUI window.
+//   2. The "Open GUI" button in the plugin info popup (line 1700).
+// Both use cn('nativePluginShowGUI', track, plugin) via string concat.
 static std::string nativePluginShowGUI(const std::string& req) {
     std::string a = unwrapArg(req);
     auto p = a.find(',');
@@ -1244,9 +1785,14 @@ static std::string nativePluginShowGUI(const std::string& req) {
     // Handle builtin plugins (soft clipper)
     if (chain->isBuiltin(pluginIdx)) {
         dlog("nativePluginShowGUI: builtin plugin path");
-        bool wasOpen = chain->getGuiOpen(pluginIdx);
+        int key = builtinKey(trackIdx, pluginIdx);
+        bool wasOpen;
+        {
+            std::lock_guard<std::mutex> lk(g_builtinGuiOpenMutex);
+            wasOpen = g_builtinGuiOpen[key];
+            g_builtinGuiOpen[key] = !wasOpen;
+        }
         float drive = chain->getDrive(pluginIdx);
-        chain->setGuiOpen(pluginIdx, !wasOpen);
         if (g_wv) {
             if (!wasOpen) {
                 std::string js = "showSoftClipperGUI(" + std::to_string(trackIdx) + "," +
@@ -1315,8 +1861,8 @@ static std::string nativePluginShowGUI(const std::string& req) {
     // Stable handle for the plugin's host callbacks (fixes master chain
     // sign-extension bug where (trackIdx<<16) with trackIdx=-1 overflowed).
     int handle = g_nextPluginGuiHandle++;
-    dlog("nativePluginShowGUI: handle=" + std::to_string(handle) + " calling setPluginHostData");
-    chain->setPluginHostData(pluginIdx, (void*)(intptr_t)handle);
+    dlog("nativePluginShowGUI: handle=" + std::to_string(handle) + " calling setPluginHandle");
+    chain->setPluginHandle(pluginIdx, handle);
 
     dlog("nativePluginShowGUI: creating GtkWindow");
     GtkWidget* win = gtk_window_new(GTK_WINDOW_TOPLEVEL);
@@ -1410,33 +1956,10 @@ static std::string nativePluginShowGUI(const std::string& req) {
     return "true";
 }
 
-static std::string nativePluginHideGUI(const std::string& req) {
-    std::string a = unwrapArg(req);
-    auto p = a.find(',');
-    if (p == std::string::npos || !g_engine) return "false";
-    int trackIdx = safeStoi(a.substr(0, p));
-    int pluginIdx = safeStoi(a.substr(p + 1));
-    int handle = -1;
-    {
-        std::lock_guard<std::mutex> lk(g_pluginGuisMutex);
-        for (const auto& g : g_pluginGuis) {
-            if (g.trackIdx == trackIdx && g.pluginIdx == pluginIdx) {
-                handle = g.handle;
-                break;
-            }
-        }
-    }
-    if (handle <= 0) return "false";
-    PluginGuiState stolen;
-    if (!erasePluginGuiByHandle(handle, &stolen)) return "false";
-    if (stolen.plugin) {
-        if (stolen.gui && stolen.gui->hide)    stolen.gui->hide(stolen.plugin);
-        if (stolen.gui && stolen.gui->destroy) stolen.gui->destroy(stolen.plugin);
-    }
-    if (stolen.window) gtk_widget_destroy(stolen.window);
-    log("PLUGIN", "GUI hidden for track " + std::to_string(trackIdx) + " plugin " + std::to_string(pluginIdx));
-    return "null";
-}
+// nativePluginHideGUI is currently unused (the toggle is in
+// nativePluginShowGUI itself: if the GUI is already open, calling
+// Show again closes it). We keep the implementation available for
+// future use.
 
 // Intercept file drops at the WebKit level (bypasses JS security restrictions)
 
@@ -1570,14 +2093,17 @@ static void crashHandler(int sig) {
     _exit(128 + sig);
 }
 
-int main() {
+int main(int argc, char** argv) {
+    (void)argc; (void)argv;
     // CRITICAL: do this BEFORE anything else. PluginChain's static
     // clap_host.thread-check reads g_mainThreadId to verify the host is
     // calling on the right thread. If we set it lazily (on first call)
     // and the first call comes from the plugin's XEmbed thread, the
     // baseline gets poisoned and every subsequent is_main_thread()
     // check returns the wrong answer.
-    PluginChain::initMainThreadId();
+    // PluginChain no longer needs initMainThreadId() — the
+    // thread-check logic was simplified to "is the audio
+    // thread?" only (see PluginChain.cpp).
 
     signal(SIGSEGV, crashHandler);
     signal(SIGABRT, crashHandler);
@@ -1594,7 +2120,24 @@ int main() {
     setenv("GDK_BACKEND", "x11", 1);
     log("SYS", "=== Hydraw DAW v" HYDRAW_VERSION " starting ===");
 
-    AudioEngine audioEngine;
+    // The bridge's ILogSink implementation. Writes to the same log
+    // file as the main log() function. The audio core calls this
+    // from any thread (including the audio thread) via the
+    // hydraw::ILogSink interface.
+    hydraw::FileLogSink fileLogSink;
+    // Open using the existing logFile path. The logger file is
+    // opened in initLogger(); we open the sink's file in
+    // append mode. The two file handles share the underlying file
+    // safely (writes are atomic for small <PIPE_BUF buffers).
+    {
+        std::filesystem::path lp = std::filesystem::current_path() /
+            ("hydraw_" + std::to_string(getpid()) + ".log");
+        if (!fileLogSink.open(lp.string())) {
+            fprintf(stderr, "[BRIDGE] WARN: failed to open FileLogSink at %s\n", lp.c_str());
+        }
+    }
+
+    AudioEngine audioEngine(&fileLogSink, &g_bridgeHostExtensions);
     if (!audioEngine.init()) {
         log("SYS", "FATAL: Failed to initialize audio engine");
         closeLogger();
@@ -1628,10 +2171,80 @@ int main() {
     w.bind("nativePause", nativePause);
     w.bind("nativeStop", nativeStop);
     w.bind("nativeSetPlayhead", nativeSetPlayhead);
+    w.bind("nativeSetBPM", nativeSetBPM);
+    w.bind("nativeSetTimeSignature", nativeSetTimeSignature);
+    w.bind("nativeSetLoopEnabled", nativeSetLoopEnabled);
+    w.bind("nativeSetLoopRange", nativeSetLoopRange);
+    w.bind("nativeSetPunchRange", nativeSetPunchRange);
+    w.bind("nativeStartRecording", nativeStartRecording);
+    w.bind("nativeStopRecording", nativeStopRecording);
+    w.bind("nativeFreezeTrack", nativeFreezeTrack);
+    w.bind("nativeUnfreezeTrack", nativeUnfreezeTrack);
+    w.bind("nativeGetPluginParams", nativeGetPluginParams);
+    w.bind("nativeSetPluginParam", nativeSetPluginParam);
+    // Undo/Redo wrappers
+    w.bind("nativeAddMidiNote", [](const std::string& req) -> std::string {
+        std::string a = unwrapArg(req);
+        auto p1 = a.find(',');
+        if (p1 == std::string::npos || !g_engine) return "-1";
+        int track = safeStoi(a.substr(0, p1));
+        auto p2 = a.find(',', p1 + 1);
+        if (p2 == std::string::npos) return "-1";
+        auto p3 = a.find(',', p2 + 1);
+        if (p3 == std::string::npos) return "-1";
+        auto p4 = a.find(',', p3 + 1);
+        if (p4 == std::string::npos) return "-1";
+        MidiNote n;
+        n.start = (uint64_t)std::max(0, safeStoi(a.substr(p1 + 1, p2 - p1 - 1)));
+        n.duration = (uint64_t)std::max(1, safeStoi(a.substr(p2 + 1, p3 - p2 - 1)));
+        n.pitch = (uint8_t)std::max(0, std::min(127, safeStoi(a.substr(p3 + 1, p4 - p3 - 1))));
+        n.velocity = (uint8_t)std::max(1, std::min(127, safeStoi(a.substr(p4 + 1))));
+        return std::to_string(g_engine->addMidiNote(track, n));
+    });
+    w.bind("nativeClearMidiLane", [](const std::string& req) -> std::string {
+        int track = safeStoi(unwrapArg(req));
+        if (g_engine) g_engine->clearMidiLane(track);
+        return "true";
+    });
+    w.bind("nativeGetMidiNoteCount", [](const std::string& req) -> std::string {
+        int track = safeStoi(unwrapArg(req));
+        if (!g_engine) return "0";
+        return std::to_string(g_engine->getMidiNoteCount(track));
+    });
+    w.bind("nativeUndo", [](const std::string&) -> std::string {
+        if (!g_engine || g_undoStack.empty()) return "false";
+        g_redoStack.push_back(ProjectSerializer::saveToString(g_engine, g_currentProjectDir));
+        if (g_redoStack.size() > kUndoCapacity) g_redoStack.erase(g_redoStack.begin());
+        std::string snap = std::move(g_undoStack.back());
+        g_undoStack.pop_back();
+        g_engine->stop();
+        g_engine->drainPendingAudioBufferDeletes();
+        bool ok = ProjectSerializer::loadFromString(snap, g_engine, g_currentProjectDir);
+        g_engine->start();
+        g_uiDirty.fetch_or(kDirtyExtended, std::memory_order_release);
+        log("UNDO", ok ? "OK" : "FAIL");
+        return ok ? "true" : "false";
+    });
+    w.bind("nativeRedo", [](const std::string&) -> std::string {
+        if (!g_engine || g_redoStack.empty()) return "false";
+        g_undoStack.push_back(ProjectSerializer::saveToString(g_engine, g_currentProjectDir));
+        if (g_undoStack.size() > kUndoCapacity) g_undoStack.erase(g_undoStack.begin());
+        std::string snap = std::move(g_redoStack.back());
+        g_redoStack.pop_back();
+        g_engine->stop();
+        g_engine->drainPendingAudioBufferDeletes();
+        bool ok = ProjectSerializer::loadFromString(snap, g_engine, g_currentProjectDir);
+        g_engine->start();
+        g_uiDirty.fetch_or(kDirtyExtended, std::memory_order_release);
+        log("REDO", ok ? "OK" : "FAIL");
+        return ok ? "true" : "false";
+    });
     w.bind("nativeAddTrack", nativeAddTrack);
     w.bind("nativeRemoveTrack", nativeRemoveTrack);
     w.bind("nativeSetVolume", nativeSetVolume);
     w.bind("nativeSetMasterVolume", nativeSetMasterVolume);
+    w.bind("nativeSetSendLevel", nativeSetSendLevel);
+    w.bind("nativeSetAuxVolume", nativeSetAuxVolume);
     w.bind("nativeSetClipStart", nativeSetClipStart);
     w.bind("nativeMoveClip", nativeMoveClip);
     w.bind("nativeSetPan", nativeSetPan);
@@ -1639,18 +2252,21 @@ int main() {
     w.bind("nativeSetSolo", nativeSetSolo);
     w.bind("nativeSetArm", nativeSetArm);
     w.bind("nativeLoadWav", nativeLoadWav);
+    w.bind("nativeAddClip", nativeAddClip);
+    w.bind("nativeRemoveClip", nativeRemoveClip);
+    w.bind("nativeSplitClip", nativeSplitClip);
+    w.bind("nativeTrimClip", nativeTrimClip);
+    w.bind("nativeSetFadeIn", nativeSetFadeIn);
+    w.bind("nativeSetFadeOut", nativeSetFadeOut);
     w.bind("nativeGetPeakCache", nativeGetPeakCache);
     w.bind("nativeListDir", nativeListDir);
     w.bind("nativeGetCwd", nativeGetCwd);
     w.bind("nativeGetAudioInfo", nativeGetAudioInfo);
     w.bind("nativePluginList", nativePluginList);
-    w.bind("nativePluginBypass", nativePluginBypass);
-    w.bind("nativePluginRemove", nativePluginRemove);
     w.bind("nativePluginLoad", nativePluginLoad);
     w.bind("nativePluginMove", nativePluginMove);
     w.bind("nativeScanClap", nativeScanClap);
     w.bind("nativePluginShowGUI", nativePluginShowGUI);
-    w.bind("nativePluginHideGUI", nativePluginHideGUI);
     w.bind("nativePageReady", nativePageReady);
     w.bind("nativeLog", nativeLog);  // JS→C++ log relay
     w.bind("nativeShowSaveDialog", nativeShowSaveDialog);
@@ -1659,9 +2275,8 @@ int main() {
     w.bind("nativeLoadProject", nativeLoadProject);
     w.bind("nativeExportAudio", nativeExportAudio);
     w.bind("nativeSetSoftClipperDrive", nativeSetSoftClipperDrive);
-    w.bind("nativeGetSoftClipperDrive", nativeGetSoftClipperDrive);
 
-    log("SYS", "All 33 native bindings registered");
+    log("SYS", "Native bindings registered (33 active, 4 dead removed in bridge refactor)");
 
     w.init(
         "window.updateUIFromNative=function(){};"

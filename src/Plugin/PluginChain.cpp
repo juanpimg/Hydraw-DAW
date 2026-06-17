@@ -9,12 +9,6 @@
 #include <unordered_map>
 #include <memory>
 
-// Verbose debug logging — declared in main.cpp. Writes only to the
-// log file (not stderr) so we can trace the plugin/audio thread paths
-// without spamming the user's console.
-extern void dlog(const std::string& msg);
-extern std::string threadId();
-
 // CLAP extensions
 #include "ext/timer-support.h"
 #include "ext/log.h"
@@ -23,8 +17,6 @@ extern std::string threadId();
 #include "ext/state.h"
 
 #include <set>
-
-extern const clap_host_gui_t s_hostGui;
 
 // ── Deferred snapshot delete queue ──
 // The main thread publishes new snapshots via exchange() and queues the
@@ -43,6 +35,10 @@ std::set<const clap_host_t*> g_pendingFlush;
 struct HostInputEvents {
     clap_input_events_t list;
     std::vector<const clap_event_header_t*> events;
+    // Storage for events embedded by callers. The pointers in `events`
+    // reference these so the events remain valid until the caller
+    // releases the HostInputEvents.
+    clap_event_param_value_t paramVal{};
 
     static uint32_t CLAP_ABI size_cb(const clap_input_events* list) {
         auto* self = (HostInputEvents*)list;
@@ -58,6 +54,18 @@ struct HostInputEvents {
     HostInputEvents() : events() {
         list.size = size_cb;
         list.get = get_cb;
+    }
+
+    void pushParamValue(uint32_t paramId, double value) {
+        paramVal.header.size = sizeof(paramVal);
+        paramVal.header.time = 0;
+        paramVal.header.space_id = CLAP_CORE_EVENT_SPACE_ID;
+        paramVal.header.type = CLAP_EVENT_PARAM_VALUE;
+        paramVal.header.flags = 0;
+        paramVal.param_id = paramId;
+        paramVal.value = value;
+        paramVal.cookie = nullptr;
+        events.push_back(&paramVal.header);
     }
 };
 
@@ -85,10 +93,38 @@ static const clap_host_timer_support_t s_hostTimer = {
     clap_host_unregister_timer
 };
 
+// CLAP_LOG_* values per clap/ext/log.h
+static hydraw::ILogSink::Level clapLogToLevel(int severity) {
+    // 0=HOST MISUSE, 1=ERROR, 2=WARNING, 3=INFO, 4=DEBUG
+    switch (severity) {
+        case 0: return hydraw::ILogSink::Level::Error;
+        case 1: return hydraw::ILogSink::Level::Error;
+        case 2: return hydraw::ILogSink::Level::Warn;
+        case 3: return hydraw::ILogSink::Level::Info;
+        case 4: return hydraw::ILogSink::Level::Debug;
+        default: return hydraw::ILogSink::Level::Error;
+    }
+}
+
 static void clap_host_log(const clap_host_t* host, clap_log_severity severity, const char* msg) {
+    // The static function installed in s_hostTemplate; can be
+    // called from ANY thread (audio, plugin worker, main). Forward
+    // to the chain's ILogSink via a thread_local "current chain"
+    // sentinel. The sentinel is set by addPlugin() around
+    // createPlugin/init/activate (the only places get_extension
+    // and log are likely to be called by the plugin).
+    (void)host;
+    extern thread_local PluginChain* t_currentChain;
+    PluginChain* chain = t_currentChain;
+    if (chain) {
+        chain->logFromClap(severity, msg ? msg : "(null)");
+        return;
+    }
+    // Last-resort fallback (init time only). The audio thread
+    // should never hit this when the bridge provided a sink.
     static const char* names[] = {"HOST", "ERROR", "WARNING", "INFO", "DEBUG"};
     int idx = (int)severity;
-    if (idx < 0 || idx > 4) idx = 1; // CLAP_LOG_ERROR
+    if (idx < 0 || idx > 4) idx = 1;
     fprintf(stderr, "[CLAP %s] %s\n", names[idx], msg ? msg : "(null)");
     fflush(stderr);
 }
@@ -107,30 +143,38 @@ static const clap_host_params_t s_hostParams = {
 };
 
 // ── clap.thread-check (H3: highly recommended per spec) ──
-// A thread-local flag set by the audio callback / main thread. The plugin
-// g_mainThreadId MUST be set on the actual main thread BEFORE any plugin
-// can call our get_extension() (which calls is_main_thread). We set it
-// from initMainThreadId() called at the top of main() before anything
-// else. The lazy-init fallback below exists as a safety net for any
-// future code path that might instantiate a PluginChain before
-// initMainThreadId() has run.
-static std::atomic<pthread_t> g_mainThreadId{0};
-void PluginChain::initMainThreadId() {
-    g_mainThreadId.store(pthread_self(), std::memory_order_release);
-}
-
-// Thread-local flag set by the audio callback while inside process().
-// Plugins call is_audio_thread() during their process() impl to verify
-// the host is calling process() on the audio thread.
+// A thread-local flag set by the audio callback. Plugins call
+// is_audio_thread() during their process() impl to verify the host
+// is calling process() on the audio thread.
+//
+// (Previously we also tracked g_mainThreadId and called
+// initMainThreadId() from main(). This was vestigial — the
+// is_main_thread check accepted any non-audio thread, so the
+// pthread_t comparison was never read. Removed in the bridge
+// refactor.)
 static thread_local bool g_inAudioCallback = false;
 
 // Thread-local cache of "we already called start_processing on this
-// plugin instance". Maps PluginInstance* to bool. We need this because
-// the snapshot's `processing` field is per-snapshot and we don't want
-// to call start_processing every block (or after every snapshot swap).
-// When a plugin is removed, its entry becomes stale but we just leak
-// the small bool; the PluginInstance is also gone so it won't match.
-static thread_local std::unordered_map<const PluginInstance*, bool> g_startedCache;
+// plugin instance". Maps packed (chain|instance) pointer-pair to bool.
+// The pair key is required because the audio thread processes multiple
+// chains per block (e.g. track 0..N-1, then master) and each chain
+// has its own independent snapshot generation. With a single global
+// key the cache would self-invalidate on every chain's process() call,
+// defeating its purpose and triggering start_processing on every block
+// for every plugin (this was a real perf bug, see
+// PERSISTENCE_SPEC.md / HIGH-1).
+//
+// We use a packed uintptr_t key (chain in high 32 bits, instance in
+// low 32 bits) because std::unordered_map<std::pair<...>> has no
+// std::hash specialization and writing a custom hasher for every
+// compiler's std::hash<T*> implementation is fragile. The two pointers
+// are truncated to 32 bits each — safe in practice (no DAW has 4B
+// live PluginInstances) and avoids the hasher issue entirely.
+static inline uint64_t packPtr(const PluginChain* c, const PluginInstance* p) {
+    return ((uint64_t)(uintptr_t)c << 32) | (uint64_t)(uintptr_t)p;
+}
+static thread_local std::unordered_map<uint64_t, bool> g_startedCache;
+static thread_local std::unordered_map<const PluginChain*, uint32_t> g_lastSnapGen;
 
 static bool clap_host_is_main_thread(const clap_host_t* host) {
     (void)host;
@@ -160,8 +204,36 @@ static const clap_host_thread_check_t s_hostThreadCheck = {
     clap_host_is_audio_thread
 };
 
+// Thread-local "current chain" sentinel. The static
+// `clap_get_extension` and `clap_host_log` functions can be called
+// from any thread (the plugin chooses). They need a way to find
+// the right PluginChain (and thus its IHostExtensions* and
+// ILogSink*). The PluginContext (stored in host_data) doesn't point
+// back to the chain directly; instead we use a thread_local
+// pointer set by addPlugin() (the only place that creates
+// dedicatedHost with a PluginContext) and read by the static
+// CLAP callbacks. Since plugin init/activate happens on the main
+// thread, and the audio thread dereferences the returned extension
+// pointers in process() (which are stable for the plugin
+// lifetime), this thread_local is set in the main thread at init
+// time and the audio thread only reads the resolved extension
+// pointers, not the thread_local itself.
+thread_local PluginChain* t_currentChain = nullptr;
+
 static const void* clap_get_extension(const clap_host_t* host, const char* extension_id) {
-    if (std::strcmp(extension_id, CLAP_EXT_GUI) == 0) return &s_hostGui;
+    // GUI: bridge-provided via the chain's IHostExtensions.
+    // The static function can be called from any thread. We use
+    // a thread_local "current chain" sentinel that addPlugin()
+    // sets before createPlugin() (which is the only place that
+    // may call get_extension) and clears after. The audio thread
+    // only reads the returned extension pointers (which are
+    // stable for the plugin's lifetime), not this thread_local.
+    if (std::strcmp(extension_id, CLAP_EXT_GUI) == 0) {
+        PluginChain* chain = t_currentChain;
+        if (!chain) return nullptr;
+        return chain->getHostExt(CLAP_EXT_GUI);
+    }
+    // Other extensions stay in the audio core.
     if (std::strcmp(extension_id, CLAP_EXT_TIMER_SUPPORT) == 0) return &s_hostTimer;
     if (std::strcmp(extension_id, CLAP_EXT_LOG) == 0) return &s_hostLog;
     if (std::strcmp(extension_id, CLAP_EXT_PARAMS) == 0) return &s_hostParams;
@@ -188,10 +260,14 @@ static const clap_host_t s_hostTemplate = []() {
 
 // ── PluginChain implementation ──
 
-PluginChain::PluginChain(int sampleRate, int blockSize, int trackIndex)
+PluginChain::PluginChain(int sampleRate, int blockSize, int trackIndex,
+                         hydraw::IHostExtensions* hostExt,
+                         hydraw::ILogSink* logSink)
     : m_sampleRate(sampleRate)
     , m_blockSize(blockSize)
     , m_trackIdx(trackIndex)
+    , m_hostExt(hostExt)
+    , m_logSink(logSink)
 {
     m_scratchBuffer.resize(blockSize * 2, 0.0f);
     // Initial empty snapshot — heap-allocated, published via m_atomicSnapshot.
@@ -200,6 +276,22 @@ PluginChain::PluginChain(int sampleRate, int blockSize, int trackIndex)
     m_gen.store(0, std::memory_order_release);
     snap->gen.store(0, std::memory_order_release);
     m_atomicSnapshot.store(snap, std::memory_order_release);
+}
+
+// Accessor used by the file-scope static `clap_host_log` to forward
+// plugin-emitted log messages to the chain's ILogSink. Public so the
+// static (file-scope) function can call it without needing friend
+// access to private members.
+void PluginChain::logFromClap(int clapSeverity, const char* msg) noexcept {
+    if (m_logSink) {
+        m_logSink->log(clapLogToLevel(clapSeverity), msg);
+    }
+}
+
+// Accessor used by the file-scope static `clap_get_extension` to
+// resolve the GUI extension via the chain's IHostExtensions.
+const void* PluginChain::getHostExt(const char* extension_id) const noexcept {
+    return m_hostExt ? m_hostExt->getExtension(extension_id) : nullptr;
 }
 
 PluginChain::~PluginChain() {
@@ -290,27 +382,44 @@ void PluginChain::drainPendingDeletes() {
 }
 
 bool PluginChain::addPlugin(const char* libraryPath, const char* pluginId) {
-    dlog("addPlugin enter track=" + std::to_string(m_trackIdx) + " id=" + std::string(pluginId) + " thread=" + threadId());
+    auto log = [this](const std::string& m) {
+        if (m_logSink) m_logSink->log(hydraw::ILogSink::Level::Debug, m.c_str());
+    };
+    log("addPlugin enter track=" + std::to_string(m_trackIdx) + " id=" + std::string(pluginId));
     // ── Phase A: load + init + activate WITHOUT holding m_mutex ──
     // (these are slow calls, we don't want to block other main-thread ops)
     void* lib = ClapHost::loadLibrary(libraryPath);
-    if (!lib) { dlog("addPlugin: loadLibrary failed for " + std::string(libraryPath)); return false; }
+    if (!lib) { log("addPlugin: loadLibrary failed for " + std::string(libraryPath)); return false; }
 
     auto dedicatedHost = std::make_unique<clap_host_t>(s_hostTemplate);
-    int slotIndex = (int)m_storage.size() + 1;
-    dedicatedHost->host_data = (void*)(intptr_t)slotIndex;
+    // Allocate a PluginContext for this instance. The bridge later
+    // sets the handle via setPluginHandle(). For now we just store
+    // the hostExt pointer (which doesn't change).
+    auto ctx = std::make_unique<PluginContext>();
+    ctx->hostExt = m_hostExt;
+    int ctxIndex = (int)m_contexts.size();
+    // Set host_data to a "back-reference" so the static
+    // clap_get_extension can find the chain. We use a
+    // thread_local pattern: the static callback reads the
+    // current chain from t_currentChain, which addPlugin() sets
+    // before createPlugin() and clears after. The PluginContext*
+    // is stored in host_data for the bridge to write the handle.
+    dedicatedHost->host_data = (void*)this;  // temporary: chain ptr for static get_extension
+    t_currentChain = this;
 
     const clap_plugin_t* plugin = ClapHost::createPlugin(lib, dedicatedHost.get(), pluginId);
     if (!plugin) {
-        dlog("addPlugin: createPlugin failed id=" + std::string(pluginId));
+        log("addPlugin: createPlugin failed id=" + std::string(pluginId));
+        t_currentChain = nullptr;
         ClapHost::unloadLibrary(lib, libraryPath);
         return false;
     }
-    dlog("addPlugin: plugin created, calling init");
+    log("addPlugin: plugin created, calling init");
 
     bool ok = plugin->init ? plugin->init(plugin) : true;
     if (!ok) {
-        dlog("addPlugin: plugin->init returned false");
+        log("addPlugin: plugin->init returned false");
+        t_currentChain = nullptr;
         ClapHost::destroyPlugin(plugin);
         ClapHost::unloadLibrary(lib, libraryPath);
         return false;
@@ -318,12 +427,13 @@ bool PluginChain::addPlugin(const char* libraryPath, const char* pluginId) {
 
     if (plugin->activate &&
         !plugin->activate(plugin, (double)m_sampleRate, (uint32_t)m_blockSize, (uint32_t)m_blockSize)) {
-        dlog("addPlugin: plugin->activate returned false");
+        log("addPlugin: plugin->activate returned false");
+        t_currentChain = nullptr;
         plugin->destroy(plugin);
         ClapHost::unloadLibrary(lib, libraryPath);
         return false;
     }
-    dlog("addPlugin: activate OK");
+    log("addPlugin: activate OK");
 
     // NOTE: start_processing is [audio-thread] per spec. We do NOT call
     // it here — the audio callback calls it on the first block for any
@@ -341,9 +451,11 @@ bool PluginChain::addPlugin(const char* libraryPath, const char* pluginId) {
         pi->id = pluginId;
         pi->active = true;
         m_storage.push_back(std::move(pi));
+        m_contexts.push_back(std::move(ctx));
         publishSnapshot(build_snapshot(m_storage, m_gen));
     }
-    dlog("addPlugin OK track=" + std::to_string(m_trackIdx) + " idx=" + std::to_string(m_storage.size() - 1));
+    t_currentChain = nullptr;
+    log("addPlugin OK track=" + std::to_string(m_trackIdx) + " idx=" + std::to_string(m_storage.size() - 1));
     return true;
 }
 
@@ -364,10 +476,13 @@ int PluginChain::addBuiltinSoftClipper() {
 }
 
 void PluginChain::removePlugin(int index) {
-    dlog("removePlugin enter track=" + std::to_string(m_trackIdx) + " idx=" + std::to_string(index) + " thread=" + threadId());
+    auto log = [this](const std::string& m) {
+        if (m_logSink) m_logSink->log(hydraw::ILogSink::Level::Debug, m.c_str());
+    };
+    log("removePlugin enter track=" + std::to_string(m_trackIdx) + " idx=" + std::to_string(index));
     {
         std::lock_guard<std::mutex> lock(m_mutex);
-        if (index < 0 || index >= (int)m_storage.size()) { dlog("removePlugin: bad index"); return; }
+        if (index < 0 || index >= (int)m_storage.size()) { log("removePlugin: bad index"); return; }
         auto& pi = m_storage[index];
         if (pi->plugin) {
             if (pi->started && pi->plugin->stop_processing)
@@ -382,28 +497,37 @@ void PluginChain::removePlugin(int index) {
             pi->library = nullptr;
         }
         m_storage.erase(m_storage.begin() + index);
+        if ((int)m_contexts.size() > index) m_contexts.erase(m_contexts.begin() + index);
         publishSnapshot(build_snapshot(m_storage, m_gen));
     }
-    dlog("removePlugin OK track=" + std::to_string(m_trackIdx) + " remaining=" + std::to_string(m_storage.size()));
+    log("removePlugin OK track=" + std::to_string(m_trackIdx) + " remaining=" + std::to_string(m_storage.size()));
 }
 
 void PluginChain::movePlugin(int from, int to) {
-    dlog("movePlugin enter track=" + std::to_string(m_trackIdx) +
-         " from=" + std::to_string(from) + " to=" + std::to_string(to) +
-         " thread=" + threadId());
+    auto log = [this](const std::string& m) {
+        if (m_logSink) m_logSink->log(hydraw::ILogSink::Level::Debug, m.c_str());
+    };
+    log("movePlugin enter track=" + std::to_string(m_trackIdx) +
+         " from=" + std::to_string(from) + " to=" + std::to_string(to));
     {
         std::lock_guard<std::mutex> lock(m_mutex);
         int n = (int)m_storage.size();
-        if (n < 2) { dlog("movePlugin: nothing to move"); return; }
-        if (from < 0 || from >= n) { dlog("movePlugin: bad from"); return; }
-        if (to < 0 || to >= n)      { dlog("movePlugin: bad to"); return; }
-        if (from == to) { dlog("movePlugin: from==to, no-op"); return; }
+        if (n < 2) { log("movePlugin: nothing to move"); return; }
+        if (from < 0 || from >= n) { log("movePlugin: bad from"); return; }
+        if (to < 0 || to >= n)      { log("movePlugin: bad to"); return; }
+        if (from == to) { log("movePlugin: from==to, no-op"); return; }
         auto pi = m_storage[from];
         m_storage.erase(m_storage.begin() + from);
         m_storage.insert(m_storage.begin() + to, pi);
+        // Move the matching PluginContext too.
+        if (from < (int)m_contexts.size() && to < (int)m_contexts.size()) {
+            auto ctx = std::move(m_contexts[from]);
+            m_contexts.erase(m_contexts.begin() + from);
+            m_contexts.insert(m_contexts.begin() + to, std::move(ctx));
+        }
         publishSnapshot(build_snapshot(m_storage, m_gen));
     }
-    dlog("movePlugin OK track=" + std::to_string(m_trackIdx));
+    log("movePlugin OK track=" + std::to_string(m_trackIdx));
 }
 
 void PluginChain::clear() {
@@ -436,11 +560,12 @@ void PluginChain::process(const float* input, float* output, int frames, int cha
     if (frames <= 0 || channels <= 0) return;
 
     static thread_local int tl_callCount = 0;
-    if (++tl_callCount == 1 || tl_callCount % 1000 == 0) {
-        dlog("process track=" + std::to_string(m_trackIdx) + " thread=" + threadId() +
+    if (m_logSink && (++tl_callCount == 1 || tl_callCount % 1000 == 0)) {
+        m_logSink->log(hydraw::ILogSink::Level::Debug,
+            ("process track=" + std::to_string(m_trackIdx) +
              " call=" + std::to_string(tl_callCount) +
              " n=" + std::to_string(snap->instances.size()) +
-             " frames=" + std::to_string(frames));
+             " frames=" + std::to_string(frames)).c_str());
     }
 
     int numChannels = channels < 2 ? channels : 2;
@@ -465,18 +590,29 @@ void PluginChain::process(const float* input, float* output, int frames, int cha
     if (numFrames > (int)(sizeof(tlsWork)/sizeof(tlsWork[0])/2))
         numFrames = (int)(sizeof(tlsWork)/sizeof(tlsWork[0])/2);
 
-    // Snapshot generation tracking: when the snapshot changes, clear the
-    // per-plugin start_processing cache so new plugins get start_processing
-    // and stale entries (from address-reused PluginInstance*) don't skip it.
-    thread_local uint32_t s_lastSnapGen = 0;
+    // Per-chain snapshot generation tracking (fixes HIGH-1). The
+    // audio thread processes each chain independently; the cache is
+    // keyed by (chain, PluginInstance*) so chains with stable gens
+    // don't get their cache invalidated by a peer chain's swap.
     uint32_t thisSnapGen = snap->gen.load(std::memory_order_acquire);
-    if (thisSnapGen != s_lastSnapGen) {
-        g_startedCache.clear();
-        s_lastSnapGen = thisSnapGen;
+    auto genIt = g_lastSnapGen.find(this);
+    bool needPrime = (genIt == g_lastSnapGen.end()) || (genIt->second != thisSnapGen);
+    if (needPrime) {
+        // Drop entries for this chain from the started cache (keep
+        // entries for other chains intact). Stale entries with
+        // address-reused PluginInstance* would otherwise incorrectly
+        // skip start_processing.
+        const uintptr_t chainAddr = (uintptr_t)this;
+        const uintptr_t chainMask = ~((uintptr_t)0xFFFFFFFFu);  // high 32 bits
+        for (auto it = g_startedCache.begin(); it != g_startedCache.end(); ) {
+            if ((it->first & chainMask) == (chainAddr << 32)) it = g_startedCache.erase(it);
+            else ++it;
+        }
         for (auto& pi : snap->instances) {
             if (pi && pi->started)
-                g_startedCache[pi.get()] = true;
+                g_startedCache[packPtr(this, pi.get())] = true;
         }
+        g_lastSnapGen[this] = thisSnapGen;
     }
 
     // Allocate buffer arrays for multi-port plugins (e.g. crossover with
@@ -506,10 +642,13 @@ void PluginChain::process(const float* input, float* output, int frames, int cha
         if (!pi->plugin || !pi->plugin->process) continue;
 
         // CLAP spec: start_processing is [audio-thread]
-        bool& startedFlag = g_startedCache[pi.get()];
+        bool& startedFlag = g_startedCache[packPtr(this, pi.get())];
         if (!startedFlag) {
-            dlog("audio thread: calling start_processing for " + pi->name +
-                 " track=" + std::to_string(m_trackIdx) + " thread=" + threadId());
+            if (m_logSink) {
+                m_logSink->log(hydraw::ILogSink::Level::Debug,
+                    ("audio thread: calling start_processing for " + pi->name +
+                     " track=" + std::to_string(m_trackIdx)).c_str());
+            }
             if (pi->plugin->start_processing)
                 pi->plugin->start_processing(pi->plugin);
             pi->started = true;
@@ -627,17 +766,9 @@ bool PluginChain::isBuiltin(int index) const {
     return m_storage[index]->isBuiltin;
 }
 
-bool PluginChain::getGuiOpen(int index) const {
-    std::lock_guard<std::mutex> lock(m_mutex);
-    if (index < 0 || index >= (int)m_storage.size()) return false;
-    return m_storage[index]->guiOpen;
-}
-
-void PluginChain::setGuiOpen(int index, bool open) {
-    std::lock_guard<std::mutex> lock(m_mutex);
-    if (index < 0 || index >= (int)m_storage.size()) return;
-    m_storage[index]->guiOpen = open;
-}
+// guiOpen/setGuiOpen were UI state and have been moved to the
+// bridge (the bridge owns its own "is GUI open" map keyed by
+// the stable handle set via setPluginHandle).
 
 float PluginChain::getDrive(int index) const {
     std::lock_guard<std::mutex> lock(m_mutex);
@@ -651,7 +782,7 @@ void PluginChain::setDrive(int index, float val) {
     m_storage[index]->drive = val;
 }
 
-void PluginChain::processPendingFlushes() {
+void PluginChain::processPendingFlushes(const std::vector<PluginChain*>& chains) {
     std::vector<const clap_host_t*> flushes;
     {
         std::lock_guard<std::mutex> lk(g_flushMutex);
@@ -660,9 +791,30 @@ void PluginChain::processPendingFlushes() {
         g_pendingFlush.clear();
     }
 
+    // For each host that requested a flush, walk every plugin in
+    // m_storage and call clap_plugin_params_t::flush on it. The plugin
+    // pushes parameter change events to our output events. We don't
+    // consume those events here yet (no parameter automation UI), but
+    // the round-trip to the plugin is what most CLAP plugins rely on
+    // to refresh their internal state and to repaint their GUIs.
+    clap_output_events_t outEvents{};
+    outEvents.ctx = nullptr;
+    outEvents.try_push = [](const clap_output_events_t*, const clap_event_header_t*) -> bool {
+        return true;
+    };
     for (const auto* host : flushes) {
         if (!host) continue;
-        // best-effort: plugins can re-trigger flush by themselves
+        for (PluginChain* chain : chains) {
+            if (!chain) continue;
+            std::lock_guard<std::mutex> lock(chain->m_mutex);
+            for (auto& pi : chain->m_storage) {
+                if (!pi->plugin) continue;
+                auto* params = (const clap_plugin_params_t*)pi->plugin->get_extension(
+                    pi->plugin, CLAP_EXT_PARAMS);
+                if (!params || !params->flush) continue;
+                params->flush(pi->plugin, nullptr, &outEvents);
+            }
+        }
     }
 }
 
@@ -681,6 +833,68 @@ int PluginChain::getPluginCount() const {
 bool PluginChain::hasPlugins() const {
     auto* s = m_atomicSnapshot.load(std::memory_order_acquire);
     return s && !s->instances.empty();
+}
+
+uint32_t PluginChain::getLatency() const {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    uint32_t total = 0;
+    for (const auto& pi : m_storage) {
+        if (!pi->plugin) continue;
+        auto* lat = (const clap_plugin_latency_t*)pi->plugin->get_extension(
+            pi->plugin, CLAP_EXT_LATENCY);
+        if (lat && lat->get) {
+            total += lat->get(pi->plugin);
+        }
+    }
+    return total;
+}
+
+std::vector<PluginChain::ParamInfo> PluginChain::getPluginParams(int index) const {
+    std::vector<ParamInfo> out;
+    std::lock_guard<std::mutex> lock(m_mutex);
+    if (index < 0 || index >= (int)m_storage.size()) return out;
+    auto& pi = m_storage[index];
+    if (!pi->plugin) return out;
+    auto* params = (const clap_plugin_params_t*)pi->plugin->get_extension(
+        pi->plugin, CLAP_EXT_PARAMS);
+    if (!params || !params->count || !params->get_info) return out;
+    uint32_t n = params->count(pi->plugin);
+    for (uint32_t i = 0; i < n; ++i) {
+        clap_param_info_t info{};
+        if (!params->get_info(pi->plugin, i, &info)) continue;
+        ParamInfo p;
+        p.id = info.id;
+        p.name = info.name;
+        p.min = info.min_value;
+        p.max = info.max_value;
+        p.defaultValue = info.default_value;
+        p.isAutomatable = (info.flags & CLAP_PARAM_IS_AUTOMATABLE) != 0;
+        if (params->get_value) {
+            double v = 0.0;
+            if (params->get_value(pi->plugin, info.id, &v)) p.value = v;
+        }
+        out.push_back(std::move(p));
+    }
+    return out;
+}
+
+bool PluginChain::setPluginParam(int index, uint32_t paramId, double value) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    if (index < 0 || index >= (int)m_storage.size()) return false;
+    auto& pi = m_storage[index];
+    if (!pi->plugin) return false;
+    auto* params = (const clap_plugin_params_t*)pi->plugin->get_extension(
+        pi->plugin, CLAP_EXT_PARAMS);
+    if (!params) return false;
+    HostInputEvents inEvents;
+    inEvents.pushParamValue(paramId, value);
+    clap_output_events_t outEvents{};
+    outEvents.ctx = nullptr;
+    outEvents.try_push = [](const clap_output_events_t*, const clap_event_header_t*) -> bool { return true; };
+    if (params->flush) {
+        params->flush(pi->plugin, &inEvents.list, &outEvents);
+    }
+    return true;
 }
 
 const char* PluginChain::getPluginName(int index) const {
@@ -713,11 +927,16 @@ const clap_plugin_t* PluginChain::getPlugin(int index) const {
     return m_storage[index]->plugin;
 }
 
-void PluginChain::setPluginHostData(int index, void* hostData) {
+bool PluginChain::setPluginHandle(int index, int handle) {
     std::lock_guard<std::mutex> lock(m_mutex);
-    if (index < 0 || index >= (int)m_storage.size()) return;
-    if (m_storage[index]->dedicatedHost)
-        m_storage[index]->dedicatedHost->host_data = hostData;
+    if (index < 0 || index >= (int)m_storage.size()) return false;
+    if (index >= (int)m_contexts.size()) return false;
+    // Write the handle to the PluginContext (audio core allocates
+    // it; bridge sets the handle). The dedicatedHost->host_data
+    // remains the chain pointer (used by clap_get_extension via
+    // t_currentChain — see top of file).
+    m_contexts[index]->handle = handle;
+    return true;
 }
 
 // ── CLAP state save/load (stream adapters) ──
