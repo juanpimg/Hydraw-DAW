@@ -1,7 +1,7 @@
 # Hydraw DAW — Project Context
 
 ## Goal
-Open‑source DAW for Linux with C++17, miniaudio, WebView (WebKit2GTK/GTK3). UI is HTML5+Tailwind+vanilla JS bridged via webview/webview v0.12.0. Replaced ImGui/GLFW in migration.
+Open‑source DAW for Linux with C++17, miniaudio, WebView (WebKit2GTK/GTK3). UI is HTML5+Tailwind+vanilla JS bridged via webview/webview v0.12.0. Replaced ImGui/GLFW in migration (see DECISIONS.md ADR-009).
 
 ## Quick Start
 ```bash
@@ -11,14 +11,16 @@ cmake -B build && cmake --build build -j$(nproc)
 Deps: `libgtk-3-dev`, `libwebkit2gtk-4.1-dev`, `libasound2-dev`.
 
 ## Architecture
-- **C++ side** (`src/main.cpp`): 22+ webview bindings (JS→C++), atomic audio state, UI update thread eval() every 30ms. Crash handler writes async-signal-safe backtrace to `hydraw_crash_<pid>.log`. Cache-buster appends `?v=<epoch>` to HTML URL so WebKitGTK re-fetches on restart.
-- **Audio engine** (`src/AudioEngine.h/cpp`): miniaudio callback, lock‑free atomics, peak cache. Deferred audio buffer delete queue avoids use-after-free between main and audio threads.
-- **Plugins** (`src/Plugin/`): CLAP hosting via dlopen. PluginChain per track + master chain. State save/load via `clap_istream_t`/`clap_ostream_t` adapters (state persistence in `.opndaw` files).
-- **HTML UI** (`assets/index.html`): Tailwind CDN, vanilla JS, no Node. State in global `STATE` object. `cn()` helper for native calls. Padding fix compensates WebKitGTK trailing-zero array bug.
-- **Build**: CMake+FetchContent for webview/webview v0.12.0. No ImGui/GLFW/OpenGL.
+- **C++ side** (`src/main.cpp`): 30+ webview bindings (JS→C++), atomic audio state, UI update thread eval() every 30ms. Crash handler writes async-signal-safe backtrace to `hydraw_crash_<pid>.log`. Cache-buster appends `?v=<epoch>` to HTML URL so WebKitGTK re-fetches on restart. Forces `GDK_BACKEND=x11` for CLAP plugin XEmbed.
+- **Audio engine** (`src/AudioEngine.h/cpp`): miniaudio callback, lock‑free atomics, peak cache, offline render for WAV export. Deferred audio buffer delete queue avoids use-after-free between main and audio threads. SoftCliper DSP on master bus (`src/DSP/SoftClipper.h`).
+- **Plugins** (`src/Plugin/`): CLAP hosting via dlopen. Lock‑free snapshot model with raw `atomic<Snapshot*>` + deferred delete. Per-track PluginChain + master chain (with preloaded PeakEater). State save/load via `clap_istream_t`/`clap_ostream_t` adapters (state persistence in `.opndaw` files). Multi-port plugin support (capped at 4 ports to prevent buffer underflow). Snapshot generation tracking for correct `start_processing`/`stop_processing` lifecycle.
+- **HTML UI** (`assets/index.html`): Tailwind CDN, vanilla JS, no Node. State in global `STATE` object. `cn()` helper for native calls. Padding fix compensates WebKitGTK trailing-zero array bug. CSS custom properties with semantic design tokens (`--bg`, `--surface`, `--text`, `--accent`, etc.). 2000+ lines of UI: transport, timeline, mixer, FX chain, browser, waveform canvas.
+- **Export** (`src/Export/WavWriter.h`): Header-only WAV writer (16-bit int / 32-bit float). Native dialog via Zenity for save path.
+- **Project persistence** (`.opndaw`): JSON-based save/load via `nativeSaveProject`/`nativeLoadProject`. Includes track state, clip positions, plugin chain config, per-plugin CLAP state blobs.
+- **Build**: CMake+FetchContent for webview/webview v0.12.0. No ImGui/GLFW/OpenGL. Source files: `main.cpp`, `AudioEngine.cpp`, `PluginChain.cpp`, `ProjectSerializer.cpp`.
 
 ## Bindings
-`nativePlay`, `nativePause`, `nativeStop`, `nativeAddTrack`, `nativeRemoveTrack`, `nativeSetVolume`, `nativeSetPan`, `nativeSetMute`, `nativeSetSolo`, `nativeSetArm`, `nativeLoadWav`, `nativeGetPeakCache`, `nativeListDir`, `nativeGetCwd`, `nativeGetAudioInfo`, `nativePluginList`, `nativePluginBypass`, `nativePluginRemove`, `nativePluginLoad`, `nativeScanClap`, `nativePageReady`, `onNativeUpdate`.
+`nativePlay`, `nativePause`, `nativeStop`, `nativeAddTrack`, `nativeRemoveTrack`, `nativeSetVolume`, `nativeSetPan`, `nativeSetMute`, `nativeSetSolo`, `nativeSetArm`, `nativeLoadWav`, `nativeGetPeakCache`, `nativeListDir`, `nativeGetCwd`, `nativeGetAudioInfo`, `nativePluginList`, `nativePluginBypass`, `nativePluginRemove`, `nativePluginLoad`, `nativeScanClap`, `nativePageReady`, `nativeSaveProject`, `nativeLoadProject`, `nativeExportAudio`, `onNativeUpdate`.
 
 Args use pipe‑delimited format (e.g. `"idx,val"`). All C++ functions use `safeStoi`/`safeStof` to prevent crashes. Void functions return `"null"` (valid JSON). File paths are escaped with `escapeJson()`.
 
@@ -32,25 +34,38 @@ Args use pipe‑delimited format (e.g. `"idx,val"`). All C++ functions use `safe
 - **Window**: `set_title("Hydraw DAW")`, `set_size(1280, 720)`.
 - **WebKitGTK trailing-zero bug**: `JavaScriptCore` drops trailing zeros from arrays parsed via `eval()`. `[7843143, 0]` → `[7843143]`. Fix: `while (STATE.audioFrames.length < STATE.trackCount) STATE.audioFrames.push(0)` runs on every `updateUIFromNative` call (not just full updates).
 - **Deferred audio delete**: `queueAudioBufferDelete()` / `drainPendingAudioBufferDeletes()`. Prevents SIGSEGV when main thread frees an `AudioBuffer*` while the audio callback holds a local copy.
-- **Plugin persistence**: Per-plugin state blob (XML text) saved as JSON-escaped string in `.opndaw` files. `PluginChain::saveState(index)` / `loadState(index, blob)` drive CLAP `state.save`/`state.load` extensions via `StringIStream`/`StringOStream`.
+- **Plugin chain snapshot model**: Raw `std::atomic<Snapshot*>` with deferred delete queue. Avoids internal mutex in `std::atomic_load/store` on `shared_ptr` (libstdc++ deadlock issue). Snapshot contains `instances`, `active`, `ports`, `processing` vectors + atomic generation counter for cache invalidation.
+- **Plugin lifecycle**: `start_processing` called on audio thread via `g_startedCache` (per-thread `unordered_map`). Snapshot gen tracking clears cache on rebuild. `stop_processing` called in destructor and before `deactivate` in `removePlugin()`.
+- **Multi-port safety**: Buffer array of 4 `clap_audio_buffer_t` per direction prevents crashes with multi-port plugins (e.g. lsp-plugins crossover with 3 output bands). All ports share same audio data pointers.
+- **Plugin persistence**: Per-plugin state blob saved as JSON-escaped string in `.opndaw` files. `PluginChain::saveState(index)` / `loadState(index, blob)` drive CLAP `state.save`/`state.load` extensions via `StringIStream`/`StringOStream`.
 
 ## UI Design
 - Layout: grid(44px transport | 1fr timeline | 1fr bottom). Bottom: 180px browser | 1fr FX chain | 280px mixer.
-- Dark theme (`#141418` bg, not pure black) with Ableton‑inspired contrast. Accent blue `#5599ff` for selection/interaction. Green `#44bb66` for audio presence. Yellow `#eebb44` for playhead/solo. Red `#ee4444` for mute/arm.
+- Dark theme with **CSS custom property tokens** (`--bg`, `--surface`, `--text`, `--accent`, etc.) for system-wide consistency. Warm carbon base (`#121417`), slate text hierarchy (`#E2E8F0` primary, `#94A3B8` secondary, `#64748B` tertiary). Ableton-inspired contrasts.
+- Accent blue `#5599ff` for selection/interaction. Green `#44bb66` for audio presence. Yellow `#eebb44` for playhead/solo. Red `#ee4444` for mute/arm.
 - Faders: vertical `<input type=range>` styled with circular blue thumbs. Meters: gradient bars (green→yellow→red).
 - Waveform: canvas 2D, `rgba(130,150,190,0.6)`, 200 bars max. `drawAllWaveforms()` explicitly clears canvas when `audioFrames[i] <= 0` to prevent ghost waveforms.
+- Mixer channel selection with `.ch.sel` CSS class, synced with track list selection.
 - Popups: centered modal for CLAP plugin list.
+- All canvas colors use `cssVar()` helper to stay in sync with theme tokens.
+- Standardized border-radius (8px components, 6px inputs), transitions (150ms/200ms/300ms), and shadows across all components.
 
 ## Git & Releases
 - Repo: `git@github.com:juanpimg/Hydraw-DAW.git`, branch: `master`.
 - Ignored: `build/`, `cmake-build-*/`, `extern/`, `plugins/`, `*.o`, `imgui.ini`, `.DS_Store`, `*.log`, `*.mp3`, `*.wav`. Whitelisted: `!plugins/*.clap`.
 - **Releases**: GitHub Actions workflow (`.github/workflows/release.yml`) crea release automáticamente al pushear un tag `v*`. Para crear release: `git tag vX.Y.Z && git push origin vX.Y.Z`. Los tags actuales siempre cuentan como pre‑release mientras el proyecto sea temprano. Todas las versions significan poner tag + push.
 
+## Docs
+- `CLAP_HOST_SPEC.md` — Detailed CLAP 1.x host compliance spec with threading model, extension contract, and phased implementation plan.
+- `DECISIONS.md` — Architecture Decision Records (ADR-000 through ADR-010).
+- `CREDITS.md` — Third-party credits (PeakEater GPL-3.0).
+
 ## Known Limitations
-- No recording, MIDI, or audio export yet.
+- No recording, MIDI yet.
 - Max 16 tracks (`MAX_TRACKS` in `src/Core/Constants.h`).
 - WAV loading is synchronous (blocks UI briefly).
 - No VST3 support (CLAP only).
 - No loop/punch in‑out.
 - `build/` dir is ~174 MB (mostly webview FetchContent deps).
 - CLAP plugin GUI windows are standalone X11 windows (not embedded in WebView).
+- Multi-port CLAP plugins have all ports sharing the same buffer (output may be incorrect for e.g. crossover splits; safe against crash).

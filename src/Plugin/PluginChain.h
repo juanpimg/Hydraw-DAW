@@ -19,7 +19,19 @@ struct PluginInstance {
     // Builtin plugin support
     bool isBuiltin{false};
     bool guiOpen{false};
-    float drive{1.0f};                  // soft clipper drive
+    float drive{1.0f};
+    bool started{false};
+
+    ~PluginInstance() {
+        if (isBuiltin) return;
+        if (plugin) {
+            if (started && plugin->stop_processing) plugin->stop_processing(plugin);
+            if (plugin->deactivate) plugin->deactivate(plugin);
+            ClapHost::destroyPlugin(plugin);
+        }
+        if (library && !path.empty())
+            ClapHost::unloadLibrary(library, path.c_str());
+    }
 };
 
 class PluginChain {
@@ -30,26 +42,20 @@ public:
     bool addPlugin(const char* libraryPath, const char* pluginId);
     int addBuiltinSoftClipper();
     void removePlugin(int index);
+    void movePlugin(int from, int to);
     void clear();
     void setBypass(int index, bool bypass);
 
-    // Real-time safe: NEVER takes a mutex. If a slot is being modified
-    // by the main thread, this returns a null snapshot and the audio
-    // thread processes silence for that slot (inaudible glitch, not a hang).
     void process(const float* input, float* output, int frames, int channels);
 
     int getPluginCount() const;
+    bool hasPlugins() const;
     const char* getPluginName(int index) const;
     const char* getPluginPath(int index) const;
     const char* getPluginId(int index) const;
     bool isBypassed(int index) const;
     const clap_plugin_t* getPlugin(int index) const;
 
-    // Patch the host_data of the plugin at `index` to the supplied handle.
-    // Used by the GUI layer to install a globally unique handle that
-    // survives any reordering / removal of plugins. The handle is opaque
-    // to the plugin and only matters for host callbacks that need to find
-    // the GUI window from inside the plugin thread.
     void setPluginHostData(int index, void* hostData);
 
     bool isBuiltin(int index) const;
@@ -58,78 +64,66 @@ public:
     float getDrive(int index) const;
     void setDrive(int index, float val);
 
-    // Save/load the plugin's state via the CLAP state extension. The
-    // payload is whatever the plugin writes to its ostream (typically
-    // a UTF-8 XML blob for JUCE-based CLAPs). saveState returns "" on
-    // failure or if the plugin is builtin / has no state extension.
-    // loadState returns false on failure. Both are [main-thread] per
-    // CLAP spec — do not call from the audio callback.
     std::string saveState(int index) const;
     bool loadState(int index, const std::string& blob);
 
-    // Process pending flush requests from the main thread (for parameter sync)
     static void processPendingFlushes();
-
-    // Set g_mainThreadId to the actual main thread. MUST be called at
-    // the very top of main() before any PluginChain is constructed.
-    // Without this, plugins that call clap_host.thread_check::is_main_thread
-    // during their get_extension() probe will see "wrong thread" errors.
     static void initMainThreadId();
-
-    // Mark the current thread as "inside the audio callback". Called
-    // by AudioEngine's audio callback at the top and bottom. Plugins
-    // use clap_host.thread-check::is_audio_thread() which reads this
-    // flag to verify the host is calling process() on the audio thread.
     static void enterAudioThread();
     static void leaveAudioThread();
 
-    // ── Lock-free snapshot model for the audio thread ──
+    // ── Lock‑free snapshot model using raw atomic<Snapshot*> + deferred delete ──
     //
-    // The audio thread reads `m_snapshots` atomically. The main thread
-    // builds a NEW snapshot vector, then publishes it by swapping
-    // `m_snapshots` (atomic shared_ptr exchange). The audio thread takes
-    // a local shared_ptr copy before processing each block, so it is
-    // never affected by concurrent edits and NEVER blocks.
+    // m_atomicSnapshot is a raw pointer to an immutable Snapshot. The audio
+    // thread reads it with a plain atomic load(acquire). The main thread
+    // publishes a new Snapshot* via exchange(acq_rel) and queues the old
+    // pointer for deferred deletion. Because the audio thread reads the
+    // pointer BEFORE processing and doesn't touch it afterward, the defer
+    // guarantees the old Snapshot survives the entire audio callback.
     //
-    // Why this fixes the timeline-pill bug:
-    //   Previously the audio callback did `m_mutex.try_lock()` and returned
-    //   silently when the main thread was inside addPlugin/removePlugin/
-    //   setBypass/setPluginHostData. Result: a full block of silence, the
-    //   playhead advance still ran, but the user perceived "pillado".
-    //   Now the audio thread sees a stable snapshot and keeps processing.
-    //
-    // Why we cache port info:
-    //   The CLAP spec says get_extension, audio_ports.count/info are
-    //   [main-thread]. PeakEater (and other plugins implementing
-    //   clap.thread-check) abort if we call them from the audio thread.
-    //   So we query them ONCE on the main thread when start_processing
-    //   is called, and store the result here.
+    // This avoids the internal mutex that std::atomic_load/store on
+    // shared_ptr uses in libstdc++ (which would deadlock if a plugin
+    // callback takes g_flushMutex while the main thread holds it).
+
+    // Must be called at the end of each audio callback (after all
+    // PluginChain::process calls) to free snapshots that the main
+    // thread has retired.
+    static void drainPendingDeletes();
 
     struct PortInfo {
         uint32_t inCount  = 0;
         uint32_t outCount = 0;
+        uint32_t inCh  = 0;
+        uint32_t outCh = 0;
         bool     hasInStereo  = false;
         bool     hasOutStereo = false;
-        bool     supportsStereo = true; // default assume stereo
+        bool     supportsStereo = true;
     };
 
     struct Snapshot {
-        std::vector<PluginInstance*> instances; // owned pointers, not the objects
-        std::vector<bool> active;               // bypass state
-        std::vector<PortInfo> ports;            // pre-computed on main thread
-        std::vector<bool> processing;           // true once start_processing ran
-        std::atomic<uint32_t> gen{0};           // increments on each publish
+        std::vector<std::shared_ptr<PluginInstance>> instances;
+        std::vector<bool> active;
+        std::vector<PortInfo> ports;
+        std::vector<bool> processing;
+        std::atomic<uint32_t> gen{0};
     };
 
 private:
     void processBuiltin(PluginInstance& pi, const float* const* inPtrs, float* const* outPtrs, int frames, int channels);
 
+    // Lock‑free publish: exchanges the current snapshot, queues old for delete.
+    void publishSnapshot(Snapshot* snap);
+
     int m_sampleRate;
     int m_blockSize;
     int m_trackIdx;
 
-    std::shared_ptr<Snapshot> m_snapshots;     // immutable from audio POV
-    mutable std::mutex m_mutex;                 // ONLY for main-thread mutations
-    std::vector<std::unique_ptr<PluginInstance>> m_storage; // owns the PluginInstance objects
+    std::atomic<Snapshot*> m_atomicSnapshot{nullptr};
+    std::atomic<uint32_t> m_gen{0};
+    mutable std::mutex m_mutex;
+    std::vector<std::shared_ptr<PluginInstance>> m_storage;
     std::vector<float> m_scratchBuffer;
+
+    static std::mutex s_pendingDeleteMutex;
+    static std::vector<Snapshot*> s_pendingDeletes;
 };

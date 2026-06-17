@@ -7,6 +7,7 @@
 #include <cmath>
 #include <pthread.h>
 #include <unordered_map>
+#include <memory>
 
 // Verbose debug logging — declared in main.cpp. Writes only to the
 // log file (not stderr) so we can trace the plugin/audio thread paths
@@ -24,6 +25,14 @@ extern std::string threadId();
 #include <set>
 
 extern const clap_host_gui_t s_hostGui;
+
+// ── Deferred snapshot delete queue ──
+// The main thread publishes new snapshots via exchange() and queues the
+// old one here. The audio thread drains the queue at the end of each
+// callback (drainPendingDeletes). This guarantees the old Snapshot stays
+// alive while any audio thread might still be reading it.
+std::mutex PluginChain::s_pendingDeleteMutex;
+std::vector<PluginChain::Snapshot*> PluginChain::s_pendingDeletes;
 
 // ── Pending flush tracking (for processPendingFlushes on main thread) ──
 static std::mutex g_flushMutex;
@@ -185,13 +194,28 @@ PluginChain::PluginChain(int sampleRate, int blockSize, int trackIndex)
     , m_trackIdx(trackIndex)
 {
     m_scratchBuffer.resize(blockSize * 2, 0.0f);
-    // Initial empty snapshot.
-    auto snap = std::make_shared<Snapshot>();
+    // Initial empty snapshot — heap-allocated, published via m_atomicSnapshot.
+    // Never deleted (it's the first snapshot and stays live until replaced).
+    auto* snap = new Snapshot();
+    m_gen.store(0, std::memory_order_release);
     snap->gen.store(0, std::memory_order_release);
-    m_snapshots = snap;
+    m_atomicSnapshot.store(snap, std::memory_order_release);
 }
 
-PluginChain::~PluginChain() { clear(); }
+PluginChain::~PluginChain() {
+    clear();
+    // Drain any snapshots still pending (e.g. the pre-clear snapshot).
+    // By this point the audio thread is dead, so no concurrent readers.
+    std::vector<Snapshot*> toFree;
+    {
+        std::lock_guard<std::mutex> lk(s_pendingDeleteMutex);
+        toFree.swap(s_pendingDeletes);
+    }
+    for (auto* s : toFree) delete s;
+    // Also free the current atomic snapshot.
+    Snapshot* cur = m_atomicSnapshot.load(std::memory_order_relaxed);
+    if (cur) { delete cur; m_atomicSnapshot.store(nullptr, std::memory_order_relaxed); }
+}
 
 namespace {
 // Build a new snapshot from the current main-thread state. Called
@@ -211,12 +235,14 @@ static PluginChain::PortInfo query_ports(PluginInstance* pi) {
     if (info.inCount > 0 && ap->get) {
         clap_audio_port_info_t pInfo;
         if (ap->get(pi->plugin, 0, true, &pInfo)) {
+            info.inCh = pInfo.channel_count;
             info.hasInStereo = (pInfo.channel_count == 2);
         }
     }
     if (info.outCount > 0 && ap->get) {
         clap_audio_port_info_t pInfo;
         if (ap->get(pi->plugin, 0, false, &pInfo)) {
+            info.outCh = pInfo.channel_count;
             info.hasOutStereo = (pInfo.channel_count == 2);
         }
     }
@@ -224,31 +250,44 @@ static PluginChain::PortInfo query_ports(PluginInstance* pi) {
     return info;
 }
 
-namespace {
-// Build a new snapshot from the current main-thread state. Called
-// under m_mutex. The returned snapshot is immutable and can be safely
-// read by the audio thread.
-std::shared_ptr<PluginChain::Snapshot> build_snapshot(
-        std::vector<std::unique_ptr<PluginInstance>>& storage,
-        std::atomic<uint32_t>& lastGen) {
-    auto snap = std::make_shared<PluginChain::Snapshot>();
+PluginChain::Snapshot* build_snapshot(
+        std::vector<std::shared_ptr<PluginInstance>>& storage,
+        std::atomic<uint32_t>& genCounter) {
+    auto* snap = new PluginChain::Snapshot();
     snap->instances.reserve(storage.size());
     snap->active.reserve(storage.size());
     snap->ports.reserve(storage.size());
     snap->processing.reserve(storage.size());
-    for (auto& up : storage) {
-        snap->instances.push_back(up.get());
-        snap->active.push_back(up->active);
-        snap->ports.push_back(query_ports(up.get()));
-        snap->processing.push_back(false); // not yet started; audio thread will set
+    for (auto& pi : storage) {
+        snap->instances.push_back(pi);
+        snap->active.push_back(pi->active);
+        snap->ports.push_back(query_ports(pi.get()));
+        snap->processing.push_back(false);
     }
-    uint32_t g = lastGen.load(std::memory_order_acquire) + 1;
-    lastGen.store(g, std::memory_order_release);
+    uint32_t g = genCounter.load(std::memory_order_acquire) + 1;
+    genCounter.store(g, std::memory_order_release);
     snap->gen.store(g, std::memory_order_release);
     return snap;
 }
 } // namespace
-} // namespace
+
+void PluginChain::publishSnapshot(Snapshot* snap) {
+    Snapshot* old = m_atomicSnapshot.exchange(snap, std::memory_order_acq_rel);
+    if (old) {
+        std::lock_guard<std::mutex> lk(s_pendingDeleteMutex);
+        s_pendingDeletes.push_back(old);
+    }
+}
+
+void PluginChain::drainPendingDeletes() {
+    std::vector<Snapshot*> toFree;
+    {
+        std::lock_guard<std::mutex> lk(s_pendingDeleteMutex);
+        if (s_pendingDeletes.empty()) return;
+        toFree.swap(s_pendingDeletes);
+    }
+    for (auto* s : toFree) delete s;
+}
 
 bool PluginChain::addPlugin(const char* libraryPath, const char* pluginId) {
     dlog("addPlugin enter track=" + std::to_string(m_trackIdx) + " id=" + std::string(pluginId) + " thread=" + threadId());
@@ -264,7 +303,7 @@ bool PluginChain::addPlugin(const char* libraryPath, const char* pluginId) {
     const clap_plugin_t* plugin = ClapHost::createPlugin(lib, dedicatedHost.get(), pluginId);
     if (!plugin) {
         dlog("addPlugin: createPlugin failed id=" + std::string(pluginId));
-        ClapHost::unloadLibrary(lib);
+        ClapHost::unloadLibrary(lib, libraryPath);
         return false;
     }
     dlog("addPlugin: plugin created, calling init");
@@ -273,7 +312,7 @@ bool PluginChain::addPlugin(const char* libraryPath, const char* pluginId) {
     if (!ok) {
         dlog("addPlugin: plugin->init returned false");
         ClapHost::destroyPlugin(plugin);
-        ClapHost::unloadLibrary(lib);
+        ClapHost::unloadLibrary(lib, libraryPath);
         return false;
     }
 
@@ -281,7 +320,7 @@ bool PluginChain::addPlugin(const char* libraryPath, const char* pluginId) {
         !plugin->activate(plugin, (double)m_sampleRate, (uint32_t)m_blockSize, (uint32_t)m_blockSize)) {
         dlog("addPlugin: plugin->activate returned false");
         plugin->destroy(plugin);
-        ClapHost::unloadLibrary(lib);
+        ClapHost::unloadLibrary(lib, libraryPath);
         return false;
     }
     dlog("addPlugin: activate OK");
@@ -291,10 +330,9 @@ bool PluginChain::addPlugin(const char* libraryPath, const char* pluginId) {
     // plugin in the snapshot whose `processing` flag is false.
 
     // ── Phase B: brief critical section — add to storage + publish snapshot ──
-    std::shared_ptr<Snapshot> newSnap;
     {
         std::lock_guard<std::mutex> lock(m_mutex);
-        auto pi = std::make_unique<PluginInstance>();
+        auto pi = std::make_shared<PluginInstance>();
         pi->library = lib;
         pi->plugin = plugin;
         pi->dedicatedHost = std::move(dedicatedHost);
@@ -303,20 +341,16 @@ bool PluginChain::addPlugin(const char* libraryPath, const char* pluginId) {
         pi->id = pluginId;
         pi->active = true;
         m_storage.push_back(std::move(pi));
-        newSnap = build_snapshot(m_storage, *const_cast<std::atomic<uint32_t>*>(&m_snapshots->gen));
+        publishSnapshot(build_snapshot(m_storage, m_gen));
     }
-    // Publish: atomic shared_ptr exchange. Audio thread sees the new
-    // snapshot on its next call to process() without ever blocking.
-    m_snapshots = std::move(newSnap);
     dlog("addPlugin OK track=" + std::to_string(m_trackIdx) + " idx=" + std::to_string(m_storage.size() - 1));
     return true;
 }
 
 int PluginChain::addBuiltinSoftClipper() {
-    std::shared_ptr<Snapshot> newSnap;
     {
         std::lock_guard<std::mutex> lock(m_mutex);
-        auto pi = std::make_unique<PluginInstance>();
+        auto pi = std::make_shared<PluginInstance>();
         pi->isBuiltin = true;
         pi->active = true;
         pi->name = "Soft Clipper";
@@ -324,65 +358,80 @@ int PluginChain::addBuiltinSoftClipper() {
         pi->id = "builtin:softclipper";
         pi->drive = 1.0f;
         m_storage.push_back(std::move(pi));
-        newSnap = build_snapshot(m_storage, *const_cast<std::atomic<uint32_t>*>(&m_snapshots->gen));
+        publishSnapshot(build_snapshot(m_storage, m_gen));
     }
-    m_snapshots = std::move(newSnap);
     return (int)m_storage.size() - 1;
 }
 
 void PluginChain::removePlugin(int index) {
     dlog("removePlugin enter track=" + std::to_string(m_trackIdx) + " idx=" + std::to_string(index) + " thread=" + threadId());
-    std::shared_ptr<Snapshot> newSnap;
     {
         std::lock_guard<std::mutex> lock(m_mutex);
         if (index < 0 || index >= (int)m_storage.size()) { dlog("removePlugin: bad index"); return; }
         auto& pi = m_storage[index];
         if (pi->plugin) {
-            dlog("removePlugin: calling deactivate+destroyPlugin");
+            if (pi->started && pi->plugin->stop_processing)
+                pi->plugin->stop_processing(pi->plugin);
+            pi->started = false;
             if (pi->plugin->deactivate) pi->plugin->deactivate(pi->plugin);
             ClapHost::destroyPlugin(pi->plugin);
+            pi->plugin = nullptr;
         }
-        if (pi->library) { dlog("removePlugin: unloadLibrary"); ClapHost::unloadLibrary(pi->library); }
+        if (pi->library) {
+            ClapHost::unloadLibrary(pi->library, pi->path.c_str());
+            pi->library = nullptr;
+        }
         m_storage.erase(m_storage.begin() + index);
-        newSnap = build_snapshot(m_storage, *const_cast<std::atomic<uint32_t>*>(&m_snapshots->gen));
+        publishSnapshot(build_snapshot(m_storage, m_gen));
     }
-    m_snapshots = std::move(newSnap);
     dlog("removePlugin OK track=" + std::to_string(m_trackIdx) + " remaining=" + std::to_string(m_storage.size()));
 }
 
-void PluginChain::clear() {
-    std::vector<std::unique_ptr<PluginInstance>> toDestroy;
+void PluginChain::movePlugin(int from, int to) {
+    dlog("movePlugin enter track=" + std::to_string(m_trackIdx) +
+         " from=" + std::to_string(from) + " to=" + std::to_string(to) +
+         " thread=" + threadId());
     {
         std::lock_guard<std::mutex> lock(m_mutex);
-        toDestroy.swap(m_storage);
+        int n = (int)m_storage.size();
+        if (n < 2) { dlog("movePlugin: nothing to move"); return; }
+        if (from < 0 || from >= n) { dlog("movePlugin: bad from"); return; }
+        if (to < 0 || to >= n)      { dlog("movePlugin: bad to"); return; }
+        if (from == to) { dlog("movePlugin: from==to, no-op"); return; }
+        auto pi = m_storage[from];
+        m_storage.erase(m_storage.begin() + from);
+        m_storage.insert(m_storage.begin() + to, pi);
+        publishSnapshot(build_snapshot(m_storage, m_gen));
     }
-    // Destroy plugins OUTSIDE the lock — they may call host callbacks
-    // (e.g. request_resize) that we don't want re-entering m_mutex.
-    for (auto& pi : toDestroy) {
-        if (pi->plugin) {
-            if (pi->plugin->deactivate) pi->plugin->deactivate(pi->plugin);
-            ClapHost::destroyPlugin(pi->plugin);
-        }
-        if (pi->library) ClapHost::unloadLibrary(pi->library);
+    dlog("movePlugin OK track=" + std::to_string(m_trackIdx));
+}
+
+void PluginChain::clear() {
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        m_storage.clear();
     }
+    m_gen.store(0, std::memory_order_release);
+    auto* emptySnap = new Snapshot();
+    emptySnap->gen.store(0, std::memory_order_release);
+    publishSnapshot(emptySnap);
 }
 
 void PluginChain::setBypass(int index, bool bypass) {
-    std::shared_ptr<Snapshot> newSnap;
     {
         std::lock_guard<std::mutex> lock(m_mutex);
         if (index < 0 || index >= (int)m_storage.size()) return;
         m_storage[index]->active = !bypass;
-        newSnap = build_snapshot(m_storage, *const_cast<std::atomic<uint32_t>*>(&m_snapshots->gen));
+        publishSnapshot(build_snapshot(m_storage, m_gen));
     }
-    m_snapshots = std::move(newSnap);
 }
 
 void PluginChain::process(const float* input, float* output, int frames, int channels) {
-    // ── LOCK-FREE: take a local shared_ptr copy of the snapshot ──
-    // The atomic load ensures we see a consistent state. The audio thread
-    // NEVER blocks, NEVER takes a mutex, NEVER waits for the main thread.
-    auto snap = m_snapshots;  // shared_ptr atomic refcount bump
+    // ── LOCK-FREE: atomic load of the raw Snapshot* ──
+    // No mutex, no deadlock. The main thread queues old snapshots for
+    // deferred deletion (drainPendingDeletes) so our pointer stays
+    // valid for the duration of this call.
+    auto* snap = m_atomicSnapshot.load(std::memory_order_acquire);
     if (!snap || snap->instances.empty()) return;
     if (frames <= 0 || channels <= 0) return;
 
@@ -407,10 +456,40 @@ void PluginChain::process(const float* input, float* output, int frames, int cha
         outPtrs[1] = output + numFrames;
     }
 
+    // Thread-local work buffer for downmix/upmix. Sized to the block size
+    // × 2 channels — stack-friendly and avoids heap allocation in the
+    // real-time audio callback. BLOCK_SIZE from Constants.h is always ≥
+    // frames for the configured device, but we allocate m_blockSize which
+    // was set in the constructor and is >= any frame count we see.
+    static thread_local float tlsWork[512]; // 256 frames × 2 channels
+    if (numFrames > (int)(sizeof(tlsWork)/sizeof(tlsWork[0])/2))
+        numFrames = (int)(sizeof(tlsWork)/sizeof(tlsWork[0])/2);
+
+    // Snapshot generation tracking: when the snapshot changes, clear the
+    // per-plugin start_processing cache so new plugins get start_processing
+    // and stale entries (from address-reused PluginInstance*) don't skip it.
+    thread_local uint32_t s_lastSnapGen = 0;
+    uint32_t thisSnapGen = snap->gen.load(std::memory_order_acquire);
+    if (thisSnapGen != s_lastSnapGen) {
+        g_startedCache.clear();
+        s_lastSnapGen = thisSnapGen;
+        for (auto& pi : snap->instances) {
+            if (pi && pi->started)
+                g_startedCache[pi.get()] = true;
+        }
+    }
+
+    // Allocate buffer arrays for multi-port plugins (e.g. crossover with
+    // 3 output bands). Cap at 4 to prevent stack overflow — no CLAP
+    // plugin in practice exceeds 4 ports.
+    static constexpr int kMaxPorts = 4;
+    clap_audio_buffer_t inBufs[kMaxPorts];
+    clap_audio_buffer_t outBufs[kMaxPorts];
+
     bool first = true;
     const size_t n = snap->instances.size();
     for (size_t i = 0; i < n; ++i) {
-        PluginInstance* pi = snap->instances[i];
+        auto& pi = snap->instances[i];
         if (!pi) continue;
         if (i < snap->active.size() && !snap->active[i]) continue;
 
@@ -426,88 +505,88 @@ void PluginChain::process(const float* input, float* output, int frames, int cha
 
         if (!pi->plugin || !pi->plugin->process) continue;
 
-        // CLAP spec: start_processing is [audio-thread]. Call it here on
-        // the first block the plugin is in the snapshot. The `processing`
-        // flag in the snapshot is per-snapshot and starts as false; we
-        // track per-callback with a thread-local cache to avoid calling
-        // start_processing more than once per plugin instance.
-        bool& startedFlag = g_startedCache[pi];
+        // CLAP spec: start_processing is [audio-thread]
+        bool& startedFlag = g_startedCache[pi.get()];
         if (!startedFlag) {
             dlog("audio thread: calling start_processing for " + pi->name +
                  " track=" + std::to_string(m_trackIdx) + " thread=" + threadId());
             if (pi->plugin->start_processing)
                 pi->plugin->start_processing(pi->plugin);
+            pi->started = true;
             startedFlag = true;
         }
 
-        // Read port info from the pre-computed snapshot (cached on
-        // main thread in query_ports). NEVER call get_extension /
-        // audio_ports.count from the audio thread — CLAP spec marks
-        // them [main-thread] and PeakEater's thread-check aborts.
+        // Read cached port info from snapshot (queried on main thread).
         const PortInfo& pinfo = (i < snap->ports.size())
             ? snap->ports[i] : PortInfo{};
-        uint32_t inPortCount  = pinfo.inCount;
-        uint32_t outPortCount = pinfo.outCount;
-        int pluginInCh  = pinfo.hasInStereo  ? 2 : numChannels;
-        int pluginOutCh = pinfo.hasOutStereo ? 2 : numChannels;
-        if (inPortCount == 0)  pluginInCh  = 0;
-        if (outPortCount == 0) pluginOutCh = 0;
+
+        uint32_t inPortCount  = std::min(pinfo.inCount, (uint32_t)kMaxPorts);
+        uint32_t outPortCount = std::min(pinfo.outCount, (uint32_t)kMaxPorts);
+
+        int pluginInCh;
+        if (pinfo.inCount == 0)    pluginInCh = 0;
+        else if (pinfo.inCh > 0)   pluginInCh = (int)pinfo.inCh;
+        else                       pluginInCh = numChannels;
+        int pluginOutCh;
+        if (pinfo.outCount == 0)   pluginOutCh = 0;
+        else if (pinfo.outCh > 0)  pluginOutCh = (int)pinfo.outCh;
+        else                       pluginOutCh = numChannels;
 
         bool needsDownmix = (numChannels == 2 && pluginInCh == 1);
         bool needsUpmix   = (numChannels == 2 && pluginOutCh == 1);
 
-        std::vector<float> work;
-        work.resize(numFrames * 2, 0.0f);
+        std::memset(tlsWork, 0, sizeof(tlsWork));
 
-        const float* monoIn[2] = {inPtrs[0], inPtrs[1]};
-        float* monoOut[2] = {outPtrs[0], outPtrs[1]};
+        const float* monoIn[2]  = {inPtrs[0],  inPtrs[1]};
+        float*       monoOut[2] = {outPtrs[0], outPtrs[1]};
 
         if (needsDownmix) {
             for (int f = 0; f < numFrames; ++f)
-                work[f] = (inPtrs[0][f] + inPtrs[1][f]) * 0.5f;
-            monoIn[0] = work.data();
+                tlsWork[f] = (inPtrs[0][f] + inPtrs[1][f]) * 0.5f;
+            monoIn[0] = tlsWork;
             monoIn[1] = nullptr;
         }
         if (needsUpmix) {
-            monoOut[0] = work.data() + (needsDownmix ? numFrames : 0);
+            monoOut[0] = tlsWork + (needsDownmix ? numFrames : 0);
             monoOut[1] = nullptr;
         }
 
-        clap_audio_buffer_t inBuf, outBuf;
-        clap_audio_buffer_t* pInBuf = (inPortCount > 0 && pluginInCh > 0) ? &inBuf : nullptr;
-        clap_audio_buffer_t* pOutBuf = (outPortCount > 0 && pluginOutCh > 0) ? &outBuf : nullptr;
+        // Set up port buffers — all input ports point to the same input
+        // data, all output ports point to the same output data. This
+        // prevents crashes with multi-port plugins (e.g. a 3-band
+        // crossover) while preserving correct pass-through for single-port
+        // plugins. Multi-port plugins will overwrite each other's output
+        // on shared buffers, but signal passes through without crashing.
+        for (uint32_t p = 0; p < inPortCount; ++p) {
+            inBufs[p].data32        = const_cast<float**>(monoIn);
+            inBufs[p].data64        = nullptr;
+            inBufs[p].channel_count = (uint32_t)pluginInCh;
+            inBufs[p].latency       = 0;
+        }
+        for (uint32_t p = 0; p < outPortCount; ++p) {
+            outBufs[p].data32        = monoOut;
+            outBufs[p].data64        = nullptr;
+            outBufs[p].channel_count = (uint32_t)pluginOutCh;
+            outBufs[p].latency       = 0;
+        }
 
-        if (pInBuf) {
-            inBuf.data32 = (float**)monoIn;
-            inBuf.data64 = nullptr;
-            inBuf.channel_count = (uint32_t)pluginInCh;
-            inBuf.latency = 0;
-        }
-        if (pOutBuf) {
-            outBuf.data32 = (float**)monoOut;
-            outBuf.data64 = nullptr;
-            outBuf.channel_count = (uint32_t)pluginOutCh;
-            outBuf.latency = 0;
-        }
+        clap_audio_buffer_t* pInBuf  = (inPortCount > 0 && pluginInCh > 0) ? inBufs : nullptr;
+        clap_audio_buffer_t* pOutBuf = (outPortCount > 0 && pluginOutCh > 0) ? outBufs : nullptr;
 
         HostInputEvents inEvents;
         HostOutputEvents outEvents;
 
         clap_process_t proc;
         memset(&proc, 0, sizeof(proc));
-        proc.audio_inputs = pInBuf;
-        proc.audio_outputs = pOutBuf;
-        proc.audio_inputs_count = inPortCount;
+        proc.audio_inputs       = pInBuf;
+        proc.audio_outputs      = pOutBuf;
+        proc.audio_inputs_count  = inPortCount;
         proc.audio_outputs_count = outPortCount;
-        proc.frames_count = (uint32_t)numFrames;
-        proc.in_events = &inEvents.list;
-        proc.out_events = &outEvents.list;
+        proc.frames_count       = (uint32_t)numFrames;
+        proc.in_events          = &inEvents.list;
+        proc.out_events         = &outEvents.list;
 
-        try {
-            pi->plugin->process(pi->plugin, &proc);
-        } catch (...) {
-            fprintf(stderr, "[PLUGIN] process exception in %s\n", pi->name.c_str());
-        }
+        pi->plugin->process(pi->plugin, &proc);
 
         // Upmix mono output → stereo
         if (needsUpmix && numChannels == 2) {
@@ -597,6 +676,11 @@ void PluginChain::leaveAudioThread() {
 int PluginChain::getPluginCount() const {
     std::lock_guard<std::mutex> lock(m_mutex);
     return (int)m_storage.size();
+}
+
+bool PluginChain::hasPlugins() const {
+    auto* s = m_atomicSnapshot.load(std::memory_order_acquire);
+    return s && !s->instances.empty();
 }
 
 const char* PluginChain::getPluginName(int index) const {

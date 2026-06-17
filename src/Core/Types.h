@@ -34,8 +34,12 @@ struct MasterBus {
 struct Track {
     std::string name;
     std::string audioFilePath;
-    std::array<std::atomic<float>, BLOCK_SIZE> bufferL;
-    std::array<std::atomic<float>, BLOCK_SIZE> bufferR;
+    // Recording scratch buffers (audio-thread write only, never read by
+    // any other thread while recording). Plain floats — no atomics needed
+    // and no false-sharing cache lines. 2KB/track × 16 tracks = 32KB
+    // saved vs the previous std::atomic<float>[BLOCK_SIZE] version.
+    float bufferL[BLOCK_SIZE];
+    float bufferR[BLOCK_SIZE];
     int writeIndex{0};
     std::atomic<float> volume{1.0f};
     std::atomic<float> pan{0.0f};

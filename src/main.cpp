@@ -949,6 +949,50 @@ static std::string nativePluginRemove(const std::string& req) {
     return "null";
 }
 
+static std::string nativePluginMove(const std::string& req) {
+    std::string a = unwrapArg(req);
+    auto p1 = a.find(',');
+    if (p1 == std::string::npos || !g_engine) return "null";
+    int trackIdx = safeStoi(a.substr(0, p1));
+    auto p2 = a.find(',', p1 + 1);
+    if (p2 == std::string::npos) return "null";
+    int from = safeStoi(a.substr(p1 + 1, p2 - p1 - 1));
+    int to   = safeStoi(a.substr(p2 + 1));
+    PluginChain* chain = g_engine->getPluginChain(trackIdx);
+    if (!chain) return "null";
+    int count = chain->getPluginCount();
+    if (from < 0 || from >= count || to < 0 || to >= count || from == to) {
+        return "null";
+    }
+    chain->movePlugin(from, to);
+    // The plugin that was at `from` is now at `to`. All other plugins
+    // shift accordingly. Update the `pluginIdx` field of any open
+    // PluginGuiState entries for this track so the GUI toggle/close
+    // paths still find the right plugin. The handle itself is stable
+    // and was already installed on the plugin's dedicated host, so the
+    // CLAP plugin's host_data is unaffected.
+    {
+        std::lock_guard<std::mutex> lk(g_pluginGuisMutex);
+        for (auto& g : g_pluginGuis) {
+            if (g.trackIdx != trackIdx) continue;
+            int idx = g.pluginIdx;
+            int newIdx = idx;
+            if (idx == from) {
+                newIdx = to;
+            } else if (from < to && idx > from && idx <= to) {
+                --newIdx;
+            } else if (from > to && idx >= to && idx < from) {
+                ++newIdx;
+            }
+            g.pluginIdx = newIdx;
+        }
+    }
+    log("PLUGIN", "move track=" + std::to_string(trackIdx) +
+        " from=" + std::to_string(from) + " to=" + std::to_string(to));
+    g_uiDirty.fetch_or(kDirtyExtended, std::memory_order_release);
+    return "null";
+}
+
 static std::string nativePluginLoad(const std::string& req) {
     std::string a = unwrapArg(req);
     auto p1 = a.find(',');
@@ -994,7 +1038,7 @@ static std::string nativeScanClap(const std::string& req) {
                 entries.push_back({libPath, desc->id,
                     desc->name ? std::string(desc->name) : std::string(desc->id)});
             }
-            ClapHost::unloadLibrary(lib);
+            ClapHost::unloadLibrary(lib, libPath.c_str());
         }
     }
     // Sort by name case-insensitively
@@ -1581,6 +1625,7 @@ int main() {
     w.bind("nativePluginBypass", nativePluginBypass);
     w.bind("nativePluginRemove", nativePluginRemove);
     w.bind("nativePluginLoad", nativePluginLoad);
+    w.bind("nativePluginMove", nativePluginMove);
     w.bind("nativeScanClap", nativeScanClap);
     w.bind("nativePluginShowGUI", nativePluginShowGUI);
     w.bind("nativePluginHideGUI", nativePluginHideGUI);

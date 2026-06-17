@@ -12,7 +12,7 @@
   <img src="https://img.shields.io/badge/PLATFORM-Linux-important?style=flat-square" alt="Platform: Linux"/>
   <img src="https://img.shields.io/badge/LANG-C%2B%2B17-00599C?style=flat-square" alt="C++17"/>
   <img src="https://img.shields.io/badge/LICENSE-MIT-yellow?style=flat-square" alt="MIT License"/>
-  <img src="https://img.shields.io/badge/version-v0.1.0-blue?style=flat-square" alt="Version 0.1.0"/>
+  <img src="https://img.shields.io/badge/version-v0.2.1-blue?style=flat-square" alt="Version 0.2.1"/>
 </p>
 
 ---
@@ -28,8 +28,10 @@
 - [x] Mezclador multipista (volumen, pan, mute, solo, armado)
 - [x] Cadena de plugins CLAP por pista
 - [x] Arrastrar y soltar archivos desde el sistema
+- [x] Exportación de audio WAV (16-bit / 32-bit float)
+- [x] Persistencia de proyecto (.opndaw) con estado de plugins CLAP
+- [x] Editor de proyecto con save/load y diálogo nativo
 - [ ] Grabación multipista (próximamente)
-- [ ] Exportación de audio (próximamente)
 
 ## Compilación
 

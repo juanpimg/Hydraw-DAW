@@ -1,15 +1,9 @@
 #!/usr/bin/env bash
+# Hydraw DAW — install system dependencies (Debian/Ubuntu)
 set -euo pipefail
 
 sudo apt-get update
 sudo apt-get install -y \
-    libglfw3-dev \
-    libgl1-mesa-dev \
-    libx11-dev \
-    libxrandr-dev \
-    libxinerama-dev \
-    libxcursor-dev \
-    libxi-dev \
-    libasound2-dev \
-    libpulse-dev \
-    libjack-jackd2-dev
+    libgtk-3-dev \
+    libwebkit2gtk-4.1-dev \
+    libasound2-dev

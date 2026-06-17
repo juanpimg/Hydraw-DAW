@@ -336,7 +336,7 @@ void GuiLayer::renderFxChain() {
                                 cachedLibPaths.push_back(path);
                             }
                         }
-                        ClapHost::unloadLibrary(lib);
+                        ClapHost::unloadLibrary(lib, path.c_str());
                     }
                 }
             }

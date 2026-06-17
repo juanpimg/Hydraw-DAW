@@ -348,14 +348,23 @@ void AudioEngine::audioCallback(ma_device* pDevice, void* pOutput, const void* p
     float* out = static_cast<float*>(pOutput);
     const float* in = static_cast<const float*>(pInput);
 
+    // HOT PATH: zero allocations, no mutex, no ostringstream. Logs only
+    // on the first call + every 5000 calls (~26s) to keep the audio
+    // thread under the xrun threshold. dlog() allocates inside its
+    // ostringstream but at this cadence (1/5000 blocks) that's ~1
+    // alloc every 26s — negligible.
     static thread_local int tl_audioCbCount = 0;
     if (++tl_audioCbCount == 1 || tl_audioCbCount % 5000 == 0) {
-        dlog("audioCallback enter thread=" + threadId() +
-             " call=" + std::to_string(tl_audioCbCount) +
+        dlog("audioCallback call=" + std::to_string(tl_audioCbCount) +
              " frames=" + std::to_string(frameCount));
     }
 
-    std::fill(out, out + frameCount * 2, 0.0f);
+    // Clamp frameCount to BLOCK_SIZE — our stack scratch buffers are
+    // sized to this constant. If the backend delivers a larger block
+    // we truncate silently (better than stack corruption).
+    if (frameCount > BLOCK_SIZE) frameCount = BLOCK_SIZE;
+
+    std::memset(out, 0, (size_t)frameCount * 2 * sizeof(float));
 
     bool playing = engine->m_transport.playing.load(std::memory_order_acquire);
     uint64_t basePlayhead = engine->m_transport.playhead.load(std::memory_order_relaxed);
@@ -363,23 +372,23 @@ void AudioEngine::audioCallback(ma_device* pDevice, void* pOutput, const void* p
 
     if (!playing && basePlayhead == 0) return;
 
-    // The audio callback is REAL TIME — it must NEVER block on a mutex.
-    // addTrack/removeTrack may be mutating m_tracks/m_pluginChains on the
-    // JS thread but the per-track fields are all std::atomic and the
-    // unique_ptrs in m_pluginChains only get swapped (never destroyed
-    // until engine shutdown), so we can read them without locking.
-    // The only consequence of a race is at most one block of audio
-    // routing to the wrong track (or a half-updated name) which is
-    // inaudible. The previous version took a try_lock here and would
-    // fall back to a blocking lock() which silently stalled the playhead
-    // and prevented window-close shutdown.
+    // REAL-TIME: never take a mutex. addTrack/removeTrack may mutate
+    // m_tracks/m_pluginChains on the JS thread but the per-track fields
+    // are all atomic and the unique_ptrs in m_pluginChains only get
+    // swapped (never destroyed until engine shutdown). At most we get
+    // one block of audio routed to the wrong track — inaudible.
 
     for (int t = 0; t < trackCount; ++t) {
         Track& track = engine->m_tracks[t];
         if (track.muted.load(std::memory_order_relaxed)) continue;
 
-        // Read block of samples for this track
-        float blockL[BLOCK_SIZE], blockR[BLOCK_SIZE];
+        // PLANAR PACKED scratch: [L0..LN-1 | R0..RN-1]. This is the
+        // exact layout PluginChain::process expects (input==output is
+        // one contiguous buffer). By keeping it planar from the start
+        // we avoid the pack/unpack loops the old code did per plugin
+        // chain. Reading from AudioBuffer::dataL/dataR is two memcpys
+        // directly into planar halves — no interleave needed.
+        float planar[BLOCK_SIZE * 2];
         bool hasAudio = false;
 
         if (playing) {
@@ -388,120 +397,132 @@ void AudioEngine::audioCallback(ma_device* pDevice, void* pOutput, const void* p
             if (buf && basePlayhead >= cs) {
                 uint64_t offset = basePlayhead - cs;
                 if (offset < buf->frames) {
-                    ma_uint64 copyFrames = frameCount;
+                    ma_uint32 copyFrames = frameCount;
                     if (offset + copyFrames > buf->frames)
-                        copyFrames = buf->frames - offset;
-                    // Bulk memcpy avoids per-sample loop overhead
-                    std::memcpy(blockL, &buf->dataL[offset], copyFrames * sizeof(float));
-                    std::memcpy(blockR, &buf->dataR[offset], copyFrames * sizeof(float));
-                    hasAudio = true;
+                        copyFrames = (ma_uint32)(buf->frames - offset);
+                    std::memcpy(planar,                    &buf->dataL[offset], copyFrames * sizeof(float));
+                    std::memcpy(planar + frameCount,       &buf->dataR[offset], copyFrames * sizeof(float));
                     if (copyFrames < frameCount) {
-                        std::memset(blockL + copyFrames, 0, (frameCount - copyFrames) * sizeof(float));
-                        std::memset(blockR + copyFrames, 0, (frameCount - copyFrames) * sizeof(float));
+                        std::memset(planar + copyFrames,                  0, (size_t)(frameCount - copyFrames) * sizeof(float));
+                        std::memset(planar + frameCount + copyFrames,     0, (size_t)(frameCount - copyFrames) * sizeof(float));
                     }
-                } else {
-                    std::memset(blockL, 0, sizeof(blockL));
-                    std::memset(blockR, 0, sizeof(blockR));
+                    hasAudio = true;
                 }
-            } else {
-                std::memset(blockL, 0, sizeof(blockL));
-                std::memset(blockR, 0, sizeof(blockR));
             }
-        } else {
-            std::memset(blockL, 0, sizeof(blockL));
-            std::memset(blockR, 0, sizeof(blockR));
+        }
+        if (!hasAudio) {
+            std::memset(planar, 0, sizeof(planar));
         }
 
-        // Add armed input
+        // Add armed input (still interleaved in `in`)
         if (track.armed.load(std::memory_order_relaxed) && in) {
             hasAudio = true;
             for (ma_uint32 f = 0; f < frameCount; ++f) {
-                blockL[f] += in[f * 2 + 0];
-                blockR[f] += in[f * 2 + 1];
-                track.bufferL[track.writeIndex].store(in[f * 2 + 0], std::memory_order_relaxed);
-                track.bufferR[track.writeIndex].store(in[f * 2 + 1], std::memory_order_relaxed);
+                planar[f]              += in[f * 2 + 0];
+                planar[f + frameCount] += in[f * 2 + 1];
+                track.bufferL[f] = in[f * 2 + 0];
+                track.bufferR[f] = in[f * 2 + 1];
             }
         }
 
-        // Process per-track plugin chain on the full block
+        // Process per-track plugin chain IN-PLACE on the planar buffer.
+        // hasPlugins() is lock-free (reads the snapshot atomically).
         auto& chain = engine->m_pluginChains[t];
-        if (chain && chain->getPluginCount() > 0 && hasAudio) {
-            // Convert to planar layout expected by PluginChain::process
-            float planar[BLOCK_SIZE * 2];
-            for (ma_uint32 f = 0; f < frameCount; ++f) {
-                planar[f] = blockL[f];
-                planar[f + frameCount] = blockR[f];
-            }
+        if (hasAudio && chain && chain->hasPlugins()) {
+            // PluginChain::process(input, output, frames, channels):
+            //   input  = planar  (L half at [0..N-1], R half at [N..2N-1])
+            //   output = planar  (in-place processing)
+            // Mono plugins only touch [0..N-1]; stereo plugins touch both.
             chain->process(planar, planar, (int)frameCount, 2);
-            // De-interleave back
-            for (ma_uint32 f = 0; f < frameCount; ++f) {
-                blockL[f] = planar[f];
-                blockR[f] = planar[f + frameCount];
-            }
         }
 
-        float vol = track.volume.load(std::memory_order_relaxed);
-        float panVal = track.pan.load(std::memory_order_relaxed);
-        double leftGain = std::min(1.0, 1.0 - panVal) * vol;
-        double rightGain = std::min(1.0, 1.0 + panVal) * vol;
+        // FUSED: gain + interleave to `out` + peak detection in ONE loop.
+        // Hoisting the gains eliminates 512 double-precision ops per block
+        // and 16*256 redundant min() calls. The branchless `t<0?-t:t` is
+        // faster than std::abs for the non-NaN path.
+        const float vol = track.volume.load(std::memory_order_relaxed);
+        const float panVal = track.pan.load(std::memory_order_relaxed);
+        const float leftGain  = (panVal < 0.0f ? 1.0f : 1.0f - panVal) * vol;
+        const float rightGain = (panVal > 0.0f ? 1.0f : 1.0f + panVal) * vol;
 
         float peakL = 0.0f, peakR = 0.0f;
+        float* outPtr = out;
+        const float* inL = planar;
+        const float* inR = planar + frameCount;
         for (ma_uint32 f = 0; f < frameCount; ++f) {
-            double tL = blockL[f] * leftGain;
-            double tR = blockR[f] * rightGain;
-            out[f * 2 + 0] += (float)tL;
-            out[f * 2 + 1] += (float)tR;
-
-            float absL = (float)std::abs(tL);
-            float absR = (float)std::abs(tR);
-            if (absL > peakL) peakL = absL;
-            if (absR > peakR) peakR = absR;
+            const float tL = inL[f] * leftGain;
+            const float tR = inR[f] * rightGain;
+            outPtr[0] += tL;
+            outPtr[1] += tR;
+            outPtr += 2;
+            const float aL = tL < 0.0f ? -tL : tL;
+            const float aR = tR < 0.0f ? -tR : tR;
+            if (aL > peakL) peakL = aL;
+            if (aR > peakR) peakR = aR;
         }
 
-        // Track peak envelope (peak hold with slow decay)
+        // Peak envelope (hold with slow decay)
         float oldPL = track.peakL.load(std::memory_order_relaxed);
-        float oldPR = track.peakR.load(std::memory_order_relaxed);
         track.peakL.store(peakL > oldPL ? peakL : oldPL * 0.999f, std::memory_order_relaxed);
+        float oldPR = track.peakR.load(std::memory_order_relaxed);
         track.peakR.store(peakR > oldPR ? peakR : oldPR * 0.999f, std::memory_order_relaxed);
     }
 
-    // Master plugin chain
+    // Master plugin chain. Read hasPlugins() lock-free here too.
     auto& mstChain = engine->m_masterPluginChain;
-    if (mstChain && mstChain->getPluginCount() > 0) {
-        dlog("audioCallback: processing MASTER chain n=" +
-             std::to_string(mstChain->getPluginCount()) + " thread=" + threadId());
+    if (mstChain && mstChain->hasPlugins()) {
+        // Master bus is interleaved in `out`. PluginChain wants planar
+        // [L | R] — we DO need one pre-pass split, but we can do it into
+        // a stack scratch and then re-interleave after, sharing the
+        // master-volume+peak pass at the end.
         float planar[BLOCK_SIZE * 2];
         for (ma_uint32 f = 0; f < frameCount; ++f) {
-            planar[f] = out[f * 2 + 0];
+            planar[f]              = out[f * 2 + 0];
             planar[f + frameCount] = out[f * 2 + 1];
         }
         mstChain->process(planar, planar, (int)frameCount, 2);
+        // Fused: re-interleave + master vol + master peak in ONE loop.
+        const float masterVol = engine->m_master.volume.load(std::memory_order_relaxed);
+        float masterPeakL = 0.0f, masterPeakR = 0.0f;
         for (ma_uint32 f = 0; f < frameCount; ++f) {
-            out[f * 2 + 0] = planar[f];
-            out[f * 2 + 1] = planar[f + frameCount];
+            const float mL = planar[f]              * masterVol;
+            const float mR = planar[f + frameCount] * masterVol;
+            out[f * 2 + 0] = mL;
+            out[f * 2 + 1] = mR;
+            const float aL = mL < 0.0f ? -mL : mL;
+            const float aR = mR < 0.0f ? -mR : mR;
+            if (aL > masterPeakL) masterPeakL = aL;
+            if (aR > masterPeakR) masterPeakR = aR;
         }
-        dlog("audioCallback: MASTER chain processed");
+        float oldML = engine->m_master.peakL.load(std::memory_order_relaxed);
+        engine->m_master.peakL.store(masterPeakL > oldML ? masterPeakL : oldML * 0.999f, std::memory_order_relaxed);
+        float oldMR = engine->m_master.peakR.load(std::memory_order_relaxed);
+        engine->m_master.peakR.store(masterPeakR > oldMR ? masterPeakR : oldMR * 0.999f, std::memory_order_relaxed);
+    } else {
+        // No master chain: just apply vol + compute peaks in one fused pass.
+        const float masterVol = engine->m_master.volume.load(std::memory_order_relaxed);
+        float masterPeakL = 0.0f, masterPeakR = 0.0f;
+        for (ma_uint32 f = 0; f < frameCount; ++f) {
+            const float mL = out[f * 2 + 0] * masterVol;
+            const float mR = out[f * 2 + 1] * masterVol;
+            out[f * 2 + 0] = mL;
+            out[f * 2 + 1] = mR;
+            const float aL = mL < 0.0f ? -mL : mL;
+            const float aR = mR < 0.0f ? -mR : mR;
+            if (aL > masterPeakL) masterPeakL = aL;
+            if (aR > masterPeakR) masterPeakR = aR;
+        }
+        float oldML = engine->m_master.peakL.load(std::memory_order_relaxed);
+        engine->m_master.peakL.store(masterPeakL > oldML ? masterPeakL : oldML * 0.999f, std::memory_order_relaxed);
+        float oldMR = engine->m_master.peakR.load(std::memory_order_relaxed);
+        engine->m_master.peakR.store(masterPeakR > oldMR ? masterPeakR : oldMR * 0.999f, std::memory_order_relaxed);
     }
-
-    // Apply master volume and update master peaks
-    float masterVol = engine->m_master.volume.load(std::memory_order_relaxed);
-    float masterPeakL = 0.0f, masterPeakR = 0.0f;
-    for (ma_uint32 f = 0; f < frameCount; ++f) {
-        float mL = out[f * 2 + 0] * masterVol;
-        float mR = out[f * 2 + 1] * masterVol;
-        out[f * 2 + 0] = mL;
-        out[f * 2 + 1] = mR;
-        float absML = std::abs(mL), absMR = std::abs(mR);
-        if (absML > masterPeakL) masterPeakL = absML;
-        if (absMR > masterPeakR) masterPeakR = absMR;
-    }
-    float oldML = engine->m_master.peakL.load(std::memory_order_relaxed);
-    float oldMR = engine->m_master.peakR.load(std::memory_order_relaxed);
-    engine->m_master.peakL.store(masterPeakL > oldML ? masterPeakL : oldML * 0.999f, std::memory_order_relaxed);
-    engine->m_master.peakR.store(masterPeakR > oldMR ? masterPeakR : oldMR * 0.999f, std::memory_order_relaxed);
 
     if (playing) {
-        uint64_t newPlayhead = engine->m_transport.playhead.fetch_add(frameCount, std::memory_order_release) + frameCount;
+        // relaxed: the playhead is monotonic and the UI thread reads it
+        // with its own acquire on the next tick. We don't publish any
+        // other data through this atomic.
+        uint64_t newPlayhead = engine->m_transport.playhead.fetch_add(frameCount, std::memory_order_relaxed) + frameCount;
 
         bool anyHasAudio = false;
         bool stillPlaying = false;
@@ -515,13 +536,15 @@ void AudioEngine::audioCallback(ma_device* pDevice, void* pOutput, const void* p
             }
         }
         if (anyHasAudio && !stillPlaying)
-            engine->m_transport.playing.store(false, std::memory_order_release);
+            engine->m_transport.playing.store(false, std::memory_order_relaxed);
     }
 
-    // Drain the deferred-delete queue. By this point every in-flight
-    // memcpy from THIS block has returned, so any AudioBuffer queued
-    // during this or an earlier block is safe to free.
+    // Drain deferred AudioBuffer deletes and Snapshot deletes. By this
+    // point every in-flight pointer from THIS block has been released,
+    // so any buffer/snapshot queued during this or an earlier block is
+    // safe to free.
     engine->drainPendingAudioBufferDeletes();
+    PluginChain::drainPendingDeletes();
 }
 
 void AudioEngine::setTrackAudioPath(int index, const char* path) {
