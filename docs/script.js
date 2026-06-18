@@ -1,6 +1,54 @@
 (function () {
   'use strict';
 
+  /* ─── spectrum bars (hero) ─── */
+  var spectrum = document.getElementById('spectrum');
+  if (spectrum && !spectrum.children.length) {
+    var BARS = 96;
+    var frag = document.createDocumentFragment();
+    var colors = ['#5599ff', '#66ddff', '#44bb66', '#eebb44', '#ee5555'];
+    for (var i = 0; i < BARS; i++) {
+      var s = document.createElement('span');
+      var t = i / (BARS - 1);
+      var colorIdx = Math.min(colors.length - 1, Math.floor(t * colors.length));
+      s.style.setProperty('--bar-color', colors[colorIdx]);
+      s.style.setProperty('--h', (20 + Math.random() * 70) + '%');
+      s.style.setProperty('--d', (0.6 + Math.random() * 1.2) + 's');
+      s.style.setProperty('--dl', (Math.random() * -2) + 's');
+      frag.appendChild(s);
+    }
+    spectrum.appendChild(frag);
+  }
+
+  /* ─── oscilloscope (hero) ─── */
+  var scopePath = document.getElementById('scopePath');
+  if (scopePath) {
+    var raf = 0;
+    var W = 200, MID = 32;
+    var phase = 0;
+    var draw = function () {
+      phase += 0.06;
+      var d = 'M0,' + MID;
+      for (var x = 0; x <= W; x += 2) {
+        var t = x / W;
+        var env = Math.pow(Math.sin(t * Math.PI), 1.4);
+        var wob = Math.sin(t * 12 + phase) * 0.4
+                + Math.sin(t * 31 + phase * 1.7) * 0.25
+                + Math.sin(t * 67 + phase * 0.6) * 0.15
+                + (Math.random() - 0.5) * 0.4;
+        var y = MID + wob * env * (MID * 0.85);
+        d += ' L' + x.toFixed(1) + ',' + y.toFixed(1);
+      }
+      scopePath.setAttribute('d', d);
+      raf = requestAnimationFrame(draw);
+    };
+    draw();
+    document.addEventListener('visibilitychange', function () {
+      if (document.hidden) cancelAnimationFrame(raf);
+      else draw();
+    });
+  }
+
   /* ─── copy to clipboard ─── */
   document.querySelectorAll('.copy').forEach(function (btn) {
     btn.addEventListener('click', function () {
@@ -31,7 +79,7 @@
     document.body.removeChild(ta);
   }
 
-  /* ─── terminal copy on click anywhere in term with data-copy ─── */
+  /* ─── terminal click to copy (click anywhere) ─── */
   document.querySelectorAll('.term[data-copy]').forEach(function (term) {
     term.addEventListener('click', function (e) {
       if (e.target.closest('.copy')) return;
@@ -41,9 +89,8 @@
   });
 
   /* ─── sidebar scrollspy ─── */
-  var sections = document.querySelectorAll('.section, .hero-banner');
+  var sections = document.querySelectorAll('.section, .hero');
   var navLinks = document.querySelectorAll('.sidebar-nav a[data-section]');
-  var sidebar = document.querySelector('.sidebar');
   var currentSection = '';
 
   function updateActiveLink() {
@@ -72,7 +119,7 @@
   window.addEventListener('resize', updateActiveLink, { passive: true });
   updateActiveLink();
 
-  /* ─── smooth click-to-nav with active highlight ─── */
+  /* ─── smooth click-to-nav ─── */
   navLinks.forEach(function (a) {
     a.addEventListener('click', function (e) {
       var href = a.getAttribute('href');
@@ -91,14 +138,7 @@
     });
   });
 
-  /* ─── details / collapse animation ─── */
-  document.querySelectorAll('details').forEach(function (d) {
-    d.addEventListener('toggle', function () {
-      // details element already toggles natively; no extra work needed
-    });
-  });
-
-  /* ─── section anchor click to copy URL ─── */
+  /* ─── section anchor permalinks ─── */
   document.querySelectorAll('.section-anchor').forEach(function (a) {
     a.addEventListener('click', function (e) {
       e.preventDefault();
@@ -108,14 +148,12 @@
       if (history.pushState) {
         history.pushState(null, '', href);
       }
-      // smooth scroll to the section
       var target = document.querySelector(href);
       if (target) {
         var y = target.getBoundingClientRect().top + window.scrollY - 90;
         window.scrollTo({ top: y, behavior: 'smooth' });
       }
 
-      // Copy URL to clipboard
       var url = window.location.origin + window.location.pathname + href;
       if (navigator.clipboard) {
         navigator.clipboard.writeText(url).catch(function () {});
@@ -123,9 +161,7 @@
     });
   });
 
-  /* ─── keyboard shortcut: cmd+k / ctrl+k to focus search? skip for now ─── */
-
-  /* ─── initial page load: if URL has hash, scroll to it ─── */
+  /* ─── initial scroll-to-hash ─── */
   if (window.location.hash) {
     var hashTarget = document.querySelector(window.location.hash);
     if (hashTarget) {
@@ -136,7 +172,7 @@
     }
   }
 
-  /* ─── sidebar active on load ─── */
+  /* ─── initial active link ─── */
   var initialHash = window.location.hash.replace('#', '');
   if (initialHash) {
     navLinks.forEach(function (a) {

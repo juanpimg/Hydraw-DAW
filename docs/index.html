@@ -4,10 +4,10 @@
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
 <title>Hydraw DAW — Technical Documentation</title>
-<meta name="description" content="Hydraw DAW technical documentation: architecture, bindings (56 native), CLAP hosting, build guide, API reference, contributing, and design decisions for developers."/>
-<meta name="theme-color" content="#08080c"/>
+<meta name="description" content="Hydraw DAW technical documentation: lock-free C++17 audio engine, 56 JS→C++ bindings, CLAP hosting, build guide, and architecture for developers."/>
+<meta name="theme-color" content="#06060a"/>
 <meta property="og:title" content="Hydraw DAW — Technical Documentation"/>
-<meta property="og:description" content="Full developer documentation for Hydraw DAW: lock-free audio engine, 56 JS→C++ bindings, CLAP host spec, ADR log, and audit roadmap."/>
+<meta property="og:description" content="Full developer documentation: lock-free audio engine, 56 native bindings, CLAP host spec, ADRs, and audit roadmap."/>
 <meta property="og:type" content="website"/>
 <link rel="preconnect" href="https://fonts.googleapis.com"/>
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
@@ -21,15 +21,17 @@
 <!-- ═══ SIDEBAR ═══ -->
 <aside class="sidebar" role="navigation" aria-label="Documentation navigation">
   <div class="sidebar-header">
-    <span class="sidebar-logo">
+    <div class="sidebar-logo">
       <span class="glyph">◉</span>hydraw<span class="suffix">/docs</span>
-    </span>
-    <span class="version">v0.3</span>
+      <span class="version">v0.3</span>
+    </div>
+    <p class="sidebar-tagline">a fast, open DAW for Linux</p>
   </div>
   <nav class="sidebar-nav">
     <div class="sidebar-nav-heading">Start here</div>
     <a href="#start" class="active" data-section="start"><span class="ico">◇</span> Overview</a>
     <a href="#getting-started" data-section="getting-started"><span class="ico">→</span> Getting started</a>
+    <a href="#preview" data-section="preview"><span class="ico">◉</span> The UI</a>
 
     <div class="sidebar-nav-heading">Architecture</div>
     <a href="#architecture" data-section="architecture"><span class="ico">⊞</span> System architecture</a>
@@ -50,53 +52,244 @@
   <div class="sidebar-footer">
     <a href="https://github.com/juanpimg/Hydraw-DAW" target="_blank" rel="noopener">GitHub</a>
     <a href="https://github.com/juanpimg/Hydraw-DAW/issues" target="_blank" rel="noopener">Issues</a>
-    <a href="#">↑ Top</a>
+    <a href="#start">↑ Top</a>
   </div>
 </aside>
 
 <!-- ═══ CONTENT ═══ -->
 <main class="content" id="start">
 
-
-<!-- ──────── OVERVIEW ──────── -->
-<section class="hero-banner">
-  <div class="eyebrow"><span class="pulse"></span> v0.3.0 · pre-release · looking for contributors</div>
-  <h1>
-    A fast, open-source DAW<br/>
-    built <span class="hl">without the friction</span>.
-  </h1>
-  <p class="sub">
-    Hydraw is a digital audio workstation for Linux combining a lock-free
-    C++17 audio engine with a hybrid HTML+JS UI bridged via WebKit2GTK.
-    No Electron, no Java, no proprietary plugin formats. 56 native bindings.
-    10 CLAP extensions. One weekend engineer.
-  </p>
-  <div class="hero-cta">
-    <a class="btn btn-primary" href="#getting-started">
-      <span>Get started</span>
-      <span class="arrow">→</span>
-    </a>
-    <a class="btn btn-ghost" href="https://github.com/juanpimg/Hydraw-DAW" target="_blank" rel="noopener">
-      <span>GitHub</span>
-      <span class="arrow">↗</span>
-    </a>
+<!-- ═══════════ HERO ═══════════ -->
+<section class="hero">
+  <div class="hero-noise" aria-hidden="true"></div>
+  <div class="hero-grid">
+    <div class="hero-left">
+      <div class="eyebrow"><span class="pulse"></span> v0.3.0 · pre-release · looking for contributors</div>
+      <h1>
+        A fast, open DAW <span class="alt">for Linux</span><br/>
+        built <span class="hl">without the friction</span>.
+      </h1>
+      <p class="sub">
+        Hydraw is a digital audio workstation combining a <strong>lock-free
+        C++17 audio engine</strong> with a hybrid HTML+JS UI bridged via
+        WebKit2GTK. No Electron, no Java, no proprietary plugin formats.
+        <strong>56 native bindings. 10 CLAP extensions. 0 telemetry.</strong>
+      </p>
+      <div class="hero-cta">
+        <a class="btn btn-primary" href="#getting-started">
+          <span>Get started</span>
+          <span class="arrow">→</span>
+        </a>
+        <a class="btn btn-ghost" href="https://github.com/juanpimg/Hydraw-DAW" target="_blank" rel="noopener">
+          <span>GitHub</span>
+          <span class="arrow">↗</span>
+        </a>
+      </div>
+      <div class="hero-meta">
+        <span class="badge"><span class="d">engine</span> <span class="v">miniaudio</span></span>
+        <span class="badge"><span class="d">lang</span> <span class="v">C++17</span></span>
+        <span class="badge"><span class="d">ui</span> <span class="v">WebKit2GTK</span></span>
+        <span class="badge"><span class="d">plugins</span> <span class="v">CLAP</span></span>
+        <span class="badge"><span class="d">license</span> <span class="v">MIT</span></span>
+      </div>
+    </div>
+    <div class="hero-right">
+      <div class="scope">
+        <div class="scope-grid"></div>
+        <svg class="scope-wave" viewBox="0 0 200 64" preserveAspectRatio="none">
+          <path id="scopePath" d="M0,32 Q5,8 10,32 T20,32 T30,32 T40,32 T50,32 T60,32 T70,32 T80,32 T90,32 T100,32 T110,32 T120,32 T130,32 T140,32 T150,32 T160,32 T170,32 T180,32 T190,32 T200,32" fill="none" stroke="url(#scopeGrad)" stroke-width="1.4"/>
+          <defs>
+            <linearGradient id="scopeGrad" x1="0" x2="1" y1="0" y2="0">
+              <stop offset="0" stop-color="#66ddff"/>
+              <stop offset=".5" stop-color="#5599ff"/>
+              <stop offset="1" stop-color="#44bb66"/>
+            </linearGradient>
+          </defs>
+        </svg>
+        <div class="scope-meta">
+          <span>ch.1 · master</span><span>−6.0 db</span>
+        </div>
+      </div>
+      <div class="mini-meters">
+        <div class="mm-row"><span class="label">L</span><span class="bar"><i></i></span></div>
+        <div class="mm-row"><span class="label">R</span><span class="bar"><i></i></span></div>
+        <div class="mm-row"><span class="label">1</span><span class="bar"><i></i></span></div>
+        <div class="mm-row"><span class="label">2</span><span class="bar"><i></i></span></div>
+        <div class="mm-row"><span class="label">3</span><span class="bar"><i></i></span></div>
+      </div>
+    </div>
   </div>
-  <div class="hero-meta">
-    <span class="badge"><span class="d">engine</span> <span class="v">miniaudio</span></span>
-    <span class="badge"><span class="d">lang</span> <span class="v">C++17 · JS</span></span>
-    <span class="badge"><span class="d">ui</span> <span class="v">WebKit2GTK</span></span>
-    <span class="badge"><span class="d">plugins</span> <span class="v">CLAP</span></span>
-    <span class="badge"><span class="d">license</span> <span class="v">MIT</span></span>
-    <span class="badge"><span class="d">audio i/o</span> <span class="v">ALSA · Pulse</span></span>
+  <div class="spectrum" id="spectrum" aria-hidden="true"></div>
+</section>
+
+<!-- ──────── AT A GLANCE ──────── -->
+<section class="section">
+  <div class="stats">
+    <div class="stat"><div class="v">56</div><div class="l">native bindings</div></div>
+    <div class="stat"><div class="v">10/12</div><div class="l">CLAP extensions</div></div>
+    <div class="stat"><div class="v">48kHz</div><div class="l">audio · 256 frames</div></div>
+    <div class="stat"><div class="v">0</div><div class="l">locks in audio thread</div></div>
+    <div class="stat"><div class="v">~6.5K</div><div class="l">lines of C++</div></div>
+    <div class="stat"><div class="v">~3K</div><div class="l">lines of HTML+JS</div></div>
+  </div>
+</section>
+
+<!-- ──────── THE STACK ──────── -->
+<section class="section">
+  <div class="section-head">
+    <span class="num">01</span>
+    <h2>The <span class="hl">stack</span></h2>
+    <a class="section-anchor" href="#start" aria-label="Link">#</a>
+  </div>
+  <p>Hydraw is built on a deliberately minimal set of well-understood technologies. No frameworks, no build tooling for the UI, no proprietary runtimes.</p>
+  <div class="stack">
+    <div class="stack-item">
+      <div class="glyph">⊞</div>
+      <h4>miniaudio</h4>
+      <p>audio engine</p>
+    </div>
+    <div class="stack-item">
+      <div class="glyph">◈</div>
+      <h4>WebKit2GTK</h4>
+      <p>UI renderer</p>
+    </div>
+    <div class="stack-item">
+      <div class="glyph">◆</div>
+      <h4>CLAP</h4>
+      <p>plugin format</p>
+    </div>
+    <div class="stack-item">
+      <div class="glyph">⌘</div>
+      <h4>nlohmann/json</h4>
+      <p>persistence</p>
+    </div>
+    <div class="stack-item">
+      <div class="glyph">◉</div>
+      <h4>ALSA · Pulse</h4>
+      <p>audio I/O</p>
+    </div>
+  </div>
+</section>
+
+<!-- ──────── UI PREVIEW ──────── -->
+<section class="section" id="preview">
+  <div class="section-head">
+    <span class="num">02</span>
+    <h2>The <span class="hl">UI</span></h2>
+    <a class="section-anchor" href="#preview" aria-label="Link">#</a>
+  </div>
+  <p>Layout inspired by Ableton Live — a transport bar, a multi-track timeline, a per-track mixer, and a CLAP chain panel. Everything renders via WebKit2GTK using the same HTML/JS/CSS you can edit on disk.</p>
+
+  <div class="mockup-section">
+    <div class="mockup-cap">render preview · hydraw/ui</div>
+    <div class="mockup" aria-label="Hydraw DAW user interface preview">
+      <div class="mock-transport">
+        <div class="mock-buttons">
+          <span class="mb mb-play" title="play"></span>
+          <span class="mb mb-stop" title="stop"></span>
+          <span class="mb mb-rec" title="record"></span>
+        </div>
+        <div class="mock-time"><span>00</span><span>:</span><span>01</span><span>:</span><span class="hl">14</span><span class="sm">.230</span></div>
+        <div class="mock-tempo">128.0 bpm · 4/4</div>
+        <div class="mock-meter">
+          <span class="mm mm-l"></span>
+          <span class="mm mm-r"></span>
+        </div>
+      </div>
+
+      <div class="mock-body">
+        <div class="mock-timeline">
+          <div class="mock-ruler">
+            <span style="--x:0%">1</span><span style="--x:8%">9</span><span style="--x:16%">17</span>
+            <span style="--x:24%">25</span><span style="--x:32%">33</span><span style="--x:40%">41</span>
+            <span style="--x:48%">49</span><span style="--x:56%">57</span><span style="--x:64%">65</span>
+            <span style="--x:72%">73</span><span style="--x:80%">81</span><span style="--x:88%">89</span>
+            <span style="--x:96%">97</span>
+          </div>
+          <div class="mock-playhead" style="--x:18%"></div>
+
+          <div class="mock-track" style="--row:0">
+            <div class="mt-name">kick</div>
+            <div class="mt-clip" style="--start:0%; --len:18%">
+              <svg viewBox="0 0 200 40" preserveAspectRatio="none"><path d="M2,20 q3,-15 6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0" fill="none" stroke="#44bb66" stroke-width="1"/></svg>
+            </div>
+            <div class="mt-clip" style="--start:22%; --len:14%">
+              <svg viewBox="0 0 200 40" preserveAspectRatio="none"><path d="M2,20 q3,-15 6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0" fill="none" stroke="#44bb66" stroke-width="1"/></svg>
+            </div>
+            <div class="mt-clip" style="--start:42%; --len:18%">
+              <svg viewBox="0 0 200 40" preserveAspectRatio="none"><path d="M2,20 q3,-15 6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0" fill="none" stroke="#44bb66" stroke-width="1"/></svg>
+            </div>
+            <div class="mt-clip" style="--start:64%; --len:14%">
+              <svg viewBox="0 0 200 40" preserveAspectRatio="none"><path d="M2,20 q3,-15 6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0" fill="none" stroke="#44bb66" stroke-width="1"/></svg>
+            </div>
+            <div class="mt-clip" style="--start:82%; --len:14%">
+              <svg viewBox="0 0 200 40" preserveAspectRatio="none"><path d="M2,20 q3,-15 6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0" fill="none" stroke="#44bb66" stroke-width="1"/></svg>
+            </div>
+          </div>
+
+          <div class="mock-track" style="--row:1">
+            <div class="mt-name">bass</div>
+            <div class="mt-clip" style="--start:0%; --len:48%">
+              <svg viewBox="0 0 200 40" preserveAspectRatio="none"><path d="M2,20 q3,-15 6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0" fill="none" stroke="#5599ff" stroke-width="1.2"/></svg>
+            </div>
+            <div class="mt-clip" style="--start:50%; --len:48%">
+              <svg viewBox="0 0 200 40" preserveAspectRatio="none"><path d="M2,20 q3,-15 6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0" fill="none" stroke="#5599ff" stroke-width="1.2"/></svg>
+            </div>
+          </div>
+
+          <div class="mock-track" style="--row:2">
+            <div class="mt-name">vox</div>
+            <div class="mt-clip" style="--start:8%; --len:34%">
+              <svg viewBox="0 0 200 40" preserveAspectRatio="none"><path d="M2,20 q3,-12 6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0" fill="none" stroke="#eebb44" stroke-width="1"/></svg>
+            </div>
+            <div class="mt-clip" style="--start:48%; --len:38%">
+              <svg viewBox="0 0 200 40" preserveAspectRatio="none"><path d="M2,20 q3,-12 6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0 t6,0" fill="none" stroke="#eebb44" stroke-width="1"/></svg>
+            </div>
+          </div>
+
+          <div class="mock-track" style="--row:3">
+            <div class="mt-name">pad</div>
+            <div class="mt-clip" style="--start:0%; --len:100%"></div>
+          </div>
+        </div>
+
+        <div class="mock-mixer">
+          <div class="mix-ch">
+            <div class="mix-name">kick</div>
+            <div class="mix-fader"><div class="mix-knob" style="--p:62%"></div></div>
+            <div class="mix-pan">C</div>
+            <div class="mix-mtr"><i style="--w:70%"></i></div>
+          </div>
+          <div class="mix-ch">
+            <div class="mix-name">bass</div>
+            <div class="mix-fader"><div class="mix-knob" style="--p:48%"></div></div>
+            <div class="mix-pan">L20</div>
+            <div class="mix-mtr"><i style="--w:54%"></i></div>
+          </div>
+          <div class="mix-ch">
+            <div class="mix-name">vox</div>
+            <div class="mix-fader"><div class="mix-knob" style="--p:70%"></div></div>
+            <div class="mix-pan">R10</div>
+            <div class="mix-mtr"><i style="--w:62%"></i></div>
+          </div>
+          <div class="mix-ch">
+            <div class="mix-name">pad</div>
+            <div class="mix-fader"><div class="mix-knob" style="--p:38%"></div></div>
+            <div class="mix-pan">C</div>
+            <div class="mix-mtr"><i style="--w:30%"></i></div>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
 </section>
 
 <!-- ──────── GETTING STARTED ──────── -->
 <section class="section" id="getting-started">
   <div class="section-head">
-    <span class="num">01</span>
+    <span class="num">03</span>
     <h2>Getting started</h2>
-    <a class="section-anchor" href="#getting-started" aria-label="Link to section">#</a>
+    <a class="section-anchor" href="#getting-started" aria-label="Link">#</a>
   </div>
 
   <h3>Dependencies</h3>
@@ -107,12 +300,12 @@
     <span class="chip green">libwebkit2gtk-4.1-dev</span>
     <span class="chip green">libasound2-dev</span>
   </div>
-  <p>miniaudio, webview v0.12.0, and nlohmann/json v3.11.3 are fetched automatically via CMake's FetchContent.</p>
+  <p><code>miniaudio</code>, <code>webview</code> v0.12.0, and <code>nlohmann/json</code> v3.11.3 are fetched automatically via CMake's <code>FetchContent</code>.</p>
 
   <h3>Build &amp; run</h3>
   <p>Three commands from a clean checkout:</p>
 
-  <div class="term" data-copy="git clone git@github.com:juanpimg/Hydraw-DAW.git && cd Hydraw-DAW">
+  <div class="term" data-copy="git clone git@github.com:juanpimg/Hydraw-DAW.git">
     <span class="prompt">$</span>
     <code>git clone git@github.com:juanpimg/Hydraw-DAW.git</code>
     <button class="copy" data-copy="git clone git@github.com:juanpimg/Hydraw-DAW.git" aria-label="Copy">copy</button>
@@ -127,7 +320,7 @@
     <code>cmake -B build &amp;&amp; cmake --build build -j$(nproc)</code>
     <button class="copy" data-copy="cmake -B build && cmake --build build -j$(nproc)" aria-label="Copy">copy</button>
   </div>
-  <div class="term" data-copy="echo done">
+  <div class="term" data-copy="./build/hydraw_daw">
     <span class="prompt">$</span>
     <code>./build/hydraw_daw</code>
     <button class="copy" data-copy="./build/hydraw_daw" aria-label="Copy">copy</button>
@@ -144,56 +337,29 @@
   <table>
     <thead><tr><th>Target</th><th>Type</th><th>Description</th><th>Dependencies</th></tr></thead>
     <tbody>
-      <tr><td><strong>hydraw_core</strong></td><td><code>STATIC</code></td><td>Audio engine + persistence + CLAP host. Zero WebKit/GTK.</td><td><code>pthread, dl, asound, nlohmann_json</code></td></tr>
-      <tr><td><strong>hydraw_daw</strong></td><td><code>EXECUTABLE</code></td><td>WebKit/GTK bridge. Links core + webview + X11.</td><td><code>hydraw_core, webview::core, GL, X11, asound, pthread, dl, rt</code></td></tr>
+      <tr><td><code><strong>hydraw_core</strong></code></td><td><code>STATIC</code></td><td>Audio engine + persistence + CLAP host. Zero WebKit/GTK.</td><td><code>pthread, dl, asound, nlohmann_json</code></td></tr>
+      <tr><td><code><strong>hydraw_daw</strong></code></td><td><code>EXECUTABLE</code></td><td>WebKit/GTK bridge. Links core + webview + X11.</td><td><code>hydraw_core, webview::core, GL, X11, asound, pthread, dl, rt</code></td></tr>
     </tbody>
   </table>
   </div>
-
   <p>Both targets are defined in a single <code>CMakeLists.txt</code> at project root (~100 lines).</p>
-
-  <h3>Repository structure (top level)</h3>
-  <pre class="file-tree">.
-├── src/           <span class="cmt"># C++ source (~6.500 lines)</span>
-├── assets/        <span class="cmt"># HTML UI (~3.000 lines), fonts</span>
-├── extern/        <span class="cmt"># Fetched: miniaudio.h, clap headers</span>
-├── plugins/       <span class="cmt"># Bundled .clap binaries (PeakEater)</span>
-├── docs/          <span class="cmt"># GitHub Pages documentation site</span>
-├── scripts/       <span class="cmt"># install_deps.sh</span>
-├── CMakeLists.txt
-├── .github/workflows/  <span class="cmt"># CI: release + pages deploy</span>
-├── AGENTS.md
-├── ARCHITECTURE_SPEC.md
-├── CLAP_HOST_SPEC.md
-├── DECISIONS.md
-├── AUDIT_ROADMAP.md
-├── PERSISTENCE_SPEC.md
-└── CREDITS.md</pre>
 </section>
 
 <!-- ──────── ARCHITECTURE ──────── -->
 <section class="section" id="architecture">
   <div class="section-head">
-    <span class="num">02</span>
+    <span class="num">04</span>
     <h2>System architecture</h2>
-    <a class="section-anchor" href="#architecture" aria-label="Link to section">#</a>
+    <a class="section-anchor" href="#architecture" aria-label="Link">#</a>
   </div>
 
-  <p>
-    Hydraw is split into two build targets: <strong>hydraw_core</strong> — a
-    pure static library with zero UI dependencies — and
-    <strong>hydraw_daw</strong> — the WebKit/GTK/X11 bridge executable.
-    This separation means the audio engine can be reused by any front-end
-    (headless tests, mobile companion, macOS, etc.) without pulling in
-    WebKit or GTK.
-  </p>
+  <p>Hydraw is split into two build targets: <strong>hydraw_core</strong> — a pure static library with zero UI dependencies — and <strong>hydraw_daw</strong> — the WebKit/GTK/X11 bridge executable. This separation means the audio engine can be reused by any front-end (headless tests, mobile companion, macOS, etc.) without pulling in WebKit or GTK.</p>
 
   <h3>Layer diagram</h3>
   <pre class="diagram">┌─────────────────────────────────────────────────────────────┐
 │ <span class="hl-b">hydraw_daw</span>  (executable) — WebKit/GTK bridge                │
 │  · src/main.cpp  (BridgeController, 56 native bindings)      │
-│  · FileLogSink (ILogSink impl), BridgeHostExtensions          │
-│    (IHostExtensions impl)                                     │
+│  · FileLogSink (ILogSink), BridgeHostExtensions (IHostExt)   │
 │  · ONLY TU that includes &lt;webview.h&gt;, &lt;gtk/gtk.h&gt;, &lt;GL/*&gt;    │
 └─────────────────────────────────────────────────────────────┘
                            │
@@ -210,10 +376,6 @@
 │  · CLAP hosting via dlopen (snapshot model, deferred delete)│
 │  · Project persistence via nlohmann/json                    │
 │  · Export offline (WAV 16-bit PCM / 32-bit float)           │
-│                                                             │
-│  Files: AudioEngine.h/cpp, PluginChain.h/cpp                │
-│         ProjectSerializer.h/cpp, Core/Types.h, Constants.h  │
-│         DSP/SoftClipper.h, Util/{Base64,Logger,PathUtils}.h │
 └─────────────────────────────────────────────────────────────┘
                            │
                            ▼
@@ -246,19 +408,34 @@
   cn("nativeLoadWav", ...) → loadWavToTrack() + publish snapshot</pre>
 
   <h3>Multi-clip model</h3>
-  <p>
-    Each track has a <strong>primary clip</strong> stored directly on the
-    <code>Track</code> struct (<code>std::atomic&lt;AudioBuffer*&gt;</code>)
-    for lock-free audio thread access. Additional clips live in a
-    <code>std::vector&lt;Clip&gt;</code> protected by a mutex, published
-    atomically to the audio thread as an immutable
-    <code>ClipsSnapshot*</code> (deep-copied, deferred-deleted).
-  </p>
-  <p>
-    When the primary ↔ extra transition happens (add, move, remove,
-    rebuildPrimaryFromClips), fade values (<code>primaryFadeIn/Out</code>
-    ↔ <code>Clip.fadeIn/Out</code>) are transferred atomically.
-  </p>
+  <p>Each track has a <strong>primary clip</strong> stored directly on the <code>Track</code> struct (<code>std::atomic&lt;AudioBuffer*&gt;</code>) for lock-free audio thread access. Additional clips live in a <code>std::vector&lt;Clip&gt;</code> protected by a mutex, published atomically to the audio thread as an immutable <code>ClipsSnapshot*</code> (deep-copied, deferred-deleted).</p>
+  <p>When the primary ↔ extra transition happens (add, move, remove, rebuildPrimaryFromClips), fade values (<code>primaryFadeIn/Out</code> ↔ <code>Clip.fadeIn/Out</code>) are transferred atomically.</p>
+
+  <h3>The three pure interfaces</h3>
+  <p>Defined in <code>src/Audio/</code> and injected via constructor:</p>
+  <div class="card-grid">
+    <div class="card card-blue">
+      <span class="card-num">interface</span>
+      <h3>IAudioObserver</h3>
+      <p>Event bus: core → bridge. <code>onTelemetry()</code>, <code>onProjectLoaded()</code>, <code>onExportComplete()</code>, <code>onLog()</code> + optional hooks.</p>
+    </div>
+    <div class="card card-green">
+      <span class="card-num">interface</span>
+      <h3>ILogSink</h3>
+      <p>Thread-safe logging. <code>log(Level, msg)</code> — lock-free, no-alloc, callable from any thread including audio.</p>
+    </div>
+    <div class="card card-yellow">
+      <span class="card-num">interface</span>
+      <h3>IHostExtensions</h3>
+      <p>CLAP host extension provider. <code>getExtension(id) → const void*</code>.</p>
+    </div>
+  </div>
+
+  <div class="callout warn">
+    <strong>Note:</strong> <code>IAudioObserver</code> is defined but not yet fully adopted —
+    the existing 30 Hz polling loop in <code>main.cpp</code> still drives
+    telemetry. Phase 7 of the migration plan will move to push-based telemetry.
+  </div>
 
   <h3>Core data structures</h3>
   <div class="table-wrap">
@@ -275,45 +452,21 @@
     </tbody>
   </table>
   </div>
-
-  <h3>The three pure interfaces</h3>
-  <p>
-    Defined in <code>src/Audio/</code> and injected via constructor:
-  </p>
-  <div class="table-wrap">
-  <table>
-    <thead><tr><th>Interface</th><th>Purpose</th><th>Methods</th></tr></thead>
-    <tbody>
-      <tr><td><strong>IAudioObserver</strong></td><td>Event bus: core → bridge</td><td><code>onTelemetry()</code>, <code>onProjectLoaded()</code>, <code>onExportComplete()</code>, <code>onLog()</code> + optional hooks</td></tr>
-      <tr><td><strong>ILogSink</strong></td><td>Thread-safe logging</td><td><code>log(Level, msg)</code> — lock-free, no-alloc</td></tr>
-      <tr><td><strong>IHostExtensions</strong></td><td>CLAP host extension provider</td><td><code>getExtension(id) → const void*</code></td></tr>
-    </tbody>
-  </table>
-  </div>
-  <div class="callout warn">
-    <strong>Note:</strong> <code>IAudioObserver</code> is defined but not yet fully adopted —
-    the existing 30 Hz polling loop in <code>main.cpp</code> still drives
-    telemetry. Phase 7 of the migration plan will move to push-based telemetry.
-  </div>
 </section>
 
 <!-- ──────── SOURCE MAP ──────── -->
 <section class="section" id="source-map">
   <div class="section-head">
-    <span class="num">03</span>
+    <span class="num">05</span>
     <h2>Source map</h2>
-    <a class="section-anchor" href="#source-map" aria-label="Link to section">#</a>
+    <a class="section-anchor" href="#source-map" aria-label="Link">#</a>
   </div>
-
-  <p>
-    Annotated file tree of <code>src/</code>. Total ~6,500 lines C++ across
-    25 files, plus ~3,000 lines HTML/JS/CSS in <code>assets/index.html</code>.
-  </p>
+  <p>Annotated file tree of <code>src/</code>. Total ~6,500 lines C++ across 25 files, plus ~3,000 lines HTML/JS/CSS in <code>assets/index.html</code>.</p>
 
   <pre class="file-tree">src/
 ├── <span class="dir">Core/</span>          <span class="cmt">// Shared types and constants</span>
 │   ├── <span class="hdr">Constants.h</span>    <span class="cmt">// SAMPLE_RATE=48000, BLOCK_SIZE=256, MAX_TRACKS=16</span>
-│   └── <span class="hdr">Types.h</span>        <span class="cmt">// Track, Clip, AudioBuffer, TransportState, MasterBus, etc.</span>
+│   └── <span class="hdr">Types.h</span>        <span class="cmt">// Track, Clip, AudioBuffer, TransportState, MasterBus...</span>
 │
 ├── <span class="dir">Audio/</span>          <span class="cmt">// Pure interfaces (header-only)</span>
 │   ├── <span class="hdr">IAudioObserver.h</span>  <span class="cmt">// push event bus interface</span>
@@ -340,27 +493,22 @@
 │   ├── <span class="src">Base64.h</span>         <span class="cmt">// RFC 4648 base64 codec (header-only)</span>
 │   └── <span class="src">PathUtils.h</span>      <span class="cmt">// path manipulation helpers</span>
 │
-├── <span class="hdr">AudioEngine.h</span>     <span class="cmt">// Main engine: tracks, transport, buses, record, etc.</span>
+├── <span class="hdr">AudioEngine.h</span>     <span class="cmt">// Main engine: tracks, transport, buses, record</span>
 ├── <span class="src">AudioEngine.cpp</span>   <span class="cmt">// miniaudio callback, mixer, freeze, loop, automation</span>
 └── <span class="src">main.cpp</span>          <span class="cmt">// Bridge ~2350 lines: 56 bindings, telemetry, crash handler</span>
 
 <span class="cmt">// Key constants:</span>
 <span class="dir">extern/</span>
 ├── <span class="cfg">miniaudio.h</span>     <span class="cmt">// Fetched automatically by CMake</span>
-└── <span class="dir">clap/</span>            <span class="cmt">// CLAP headers (clap.h, ext/*)</span>
-
-<span class="cmt">// Other:</span>
-<span class="git">assets/index.html</span>  <span class="cmt">// ~3,000 lines: HTML+Tailwind+vanilla JS</span>
-<span class="git">scripts/install_deps.sh</span>  <span class="cmt">// Ubuntu/Debian dependency installer</span>
-<span class="git">CMakeLists.txt</span>           <span class="cmt">// ~100 lines, FetchContent for webview + nlohmann</span></pre>
+└── <span class="dir">clap/</span>            <span class="cmt">// CLAP headers (clap.h, ext/*)</span></pre>
 </section>
 
 <!-- ──────── THREADING ──────── -->
 <section class="section" id="threading">
   <div class="section-head">
-    <span class="num">04</span>
+    <span class="num">06</span>
     <h2>Threading model</h2>
-    <a class="section-anchor" href="#threading" aria-label="Link to section">#</a>
+    <a class="section-anchor" href="#threading" aria-label="Link">#</a>
   </div>
 
   <pre class="diagram">┌────────────────────┐    ┌────────────────────┐    ┌──────────────────────┐
@@ -416,9 +564,7 @@
   </div>
 
   <h3>Snapshot &amp; deferred-delete pattern</h3>
-  <p>
-    Used for: clips, plugin chains, automation data, and MIDI notes.
-  </p>
+  <p>Used for: clips, plugin chains, automation data, and MIDI notes.</p>
   <div class="table-wrap">
   <table>
     <thead><tr><th>Snapshot type</th><th>Atomic pointer</th><th>Publisher</th><th>Deferred delete queue</th></tr></thead>
@@ -435,18 +581,11 @@
 <!-- ──────── BINDINGS ──────── -->
 <section class="section" id="bindings">
   <div class="section-head">
-    <span class="num">05</span>
+    <span class="num">07</span>
     <h2>Native bindings reference</h2>
-    <a class="section-anchor" href="#bindings" aria-label="Link to section">#</a>
+    <a class="section-anchor" href="#bindings" aria-label="Link">#</a>
   </div>
-
-  <p>
-    All 56 bindings registered via <code>w.bind(name, handler)</code> in
-    <code>src/main.cpp</code>. JS calls them via <code>cn(name, args)</code>
-    where <code>args</code> is a comma-delimited string. C++ handlers use
-    <code>safeStoi</code>/<code>safeStof</code> for crash safety. Void
-    functions return the string <code>"null"</code>.
-  </p>
+  <p>All 56 bindings registered via <code>w.bind(name, handler)</code> in <code>src/main.cpp</code>. JS calls them via <code>cn(name, args)</code> where <code>args</code> is a comma-delimited string. C++ handlers use <code>safeStoi</code>/<code>safeStof</code> for crash safety. Void functions return the string <code>"null"</code>.</p>
 
   <div class="binding-group">
     <div class="binding-group-title">Transport <span class="count">9</span></div>
@@ -607,33 +746,27 @@
 <!-- ──────── CLAP ──────── -->
 <section class="section" id="clap">
   <div class="section-head">
-    <span class="num">06</span>
-    <h2>CLAP hosting specification</h2>
-    <a class="section-anchor" href="#clap" aria-label="Link to section">#</a>
+    <span class="num">08</span>
+    <h2>CLAP hosting</h2>
+    <a class="section-anchor" href="#clap" aria-label="Link">#</a>
   </div>
-
-  <p>
-    Hydraw implements the <strong>CLAP</strong> (CLever Audio Plugin) standard
-    via <code>dlopen</code> in <code>src/Plugin/</code>. The host provides
-    a lock-free snapshot model for the audio thread, real parameter flush,
-    thread-check extension, and full lifecycle management.
-  </p>
+  <p>Hydraw implements the <strong>CLAP</strong> (CLever Audio Plugin) standard via <code>dlopen</code> in <code>src/Plugin/</code>. The host provides a lock-free snapshot model for the audio thread, real parameter flush, thread-check extension, and full lifecycle management.</p>
 
   <h3>Implemented extensions</h3>
   <div class="table-wrap">
   <table>
     <thead><tr><th>Extension</th><th>Status</th><th>Details</th></tr></thead>
     <tbody>
-      <tr><td><code>audio-ports</code></td><td><span class="status-op">✅</span></td><td>Multi-port query (up to 4 ports, shared buffer)</td></tr>
-      <tr><td><code>state</code></td><td><span class="status-op">✅</span></td><td>StringIStream/StringOStream adapters, base64 persistence</td></tr>
-      <tr><td><code>gui</code></td><td><span class="status-op">✅</span></td><td>X11 embedding via clap_host_gui; dispatch to main thread</td></tr>
-      <tr><td><code>thread-check</code></td><td><span class="status-op">✅</span></td><td><code>clap_host_is_main_thread</code> / <code>is_audio_thread</code></td></tr>
-      <tr><td><code>timer-support</code></td><td><span class="status-op">✅</span></td><td>CLAP timers via g_timeout_add</td></tr>
-      <tr><td><code>log</code></td><td><span class="status-op">✅</span></td><td>Redirect to ILogSink with severity mapping</td></tr>
-      <tr><td><code>params</code></td><td><span class="status-op">✅</span></td><td>Real <code>clap_plugin_params_t::flush()</code> via request_flush queue</td></tr>
-      <tr><td><code>render</code></td><td><span class="status-op">✅</span></td><td>Offline render mode for freeze/export</td></tr>
-      <tr><td><code>note-ports</code></td><td><span class="status-op">✅</span></td><td>MIDI note events via clap_input_events_t</td></tr>
-      <tr><td><code>latency</code></td><td><span class="status-op">✅</span></td><td>PDC via DelayLine per track + master</td></tr>
+      <tr><td><code>audio-ports</code></td><td><span class="status-op">✓</span></td><td>Multi-port query (up to 4 ports, shared buffer)</td></tr>
+      <tr><td><code>state</code></td><td><span class="status-op">✓</span></td><td>StringIStream/StringOStream adapters, base64 persistence</td></tr>
+      <tr><td><code>gui</code></td><td><span class="status-op">✓</span></td><td>X11 embedding via clap_host_gui; dispatch to main thread</td></tr>
+      <tr><td><code>thread-check</code></td><td><span class="status-op">✓</span></td><td><code>clap_host_is_main_thread</code> / <code>is_audio_thread</code></td></tr>
+      <tr><td><code>timer-support</code></td><td><span class="status-op">✓</span></td><td>CLAP timers via g_timeout_add</td></tr>
+      <tr><td><code>log</code></td><td><span class="status-op">✓</span></td><td>Redirect to ILogSink with severity mapping</td></tr>
+      <tr><td><code>params</code></td><td><span class="status-op">✓</span></td><td>Real <code>clap_plugin_params_t::flush()</code> via request_flush queue</td></tr>
+      <tr><td><code>render</code></td><td><span class="status-op">✓</span></td><td>Offline render mode for freeze/export</td></tr>
+      <tr><td><code>note-ports</code></td><td><span class="status-op">✓</span></td><td>MIDI note events via clap_input_events_t</td></tr>
+      <tr><td><code>latency</code></td><td><span class="status-op">✓</span></td><td>PDC via DelayLine per track + master</td></tr>
     </tbody>
   </table>
   </div>
@@ -643,14 +776,14 @@
   <table>
     <thead><tr><th>#</th><th>Finding</th><th>Severity</th><th>Status</th></tr></thead>
     <tbody>
-      <tr><td><strong>H1</strong></td><td><code>PluginChain::process</code> uses <code>try_lock</code>, drops audio if contended</td><td><span class="status-wip">CRITICAL</span></td><td><span class="status-op">✅ Resolved</span> — lock-free snapshot model with <code>std::atomic&lt;Snapshot*&gt;</code></td></tr>
-      <tr><td><strong>H2</strong></td><td><code>clap_host_request_resize</code> calls <code>gtk_window_resize</code> from any thread</td><td><span class="status-wip">HIGH</span></td><td><span class="status-wip">⚠️ Pending</span> — currently just dlog, no dispatch</td></tr>
-      <tr><td><strong>H3</strong></td><td>No <code>clap.thread-check</code> provided</td><td><span class="status-wip">HIGH</span></td><td><span class="status-op">✅ Resolved</span> — <code>s_hostThreadCheck</code> implemented</td></tr>
-      <tr><td><strong>H4</strong></td><td>GUI doesn't follow official order (skip <code>can_resize</code>/<code>adjust_size</code>)</td><td>MEDIUM</td><td><span class="status-gap">⬜ Pending</span></td></tr>
-      <tr><td><strong>H5</strong></td><td><code>gui->closed</code> is no-op, ignores <code>was_destroyed</code></td><td>MEDIUM</td><td><span class="status-op">✅ Resolved</span> — dispatch to main thread</td></tr>
-      <tr><td><strong>H6</strong></td><td><code>clap_host_log</code> is empty</td><td>MEDIUM</td><td><span class="status-op">✅ Resolved</span> — routes to ILogSink</td></tr>
-      <tr><td><strong>H7</strong></td><td>Plugin scan loads + unloads .clap on main thread (no sandbox)</td><td>MEDIUM</td><td><span class="status-gap">⬜ Pending</span></td></tr>
-      <tr><td><strong>H8</strong></td><td><code>init</code> + <code>activate</code> synchronous on main thread</td><td>LOW</td><td><span class="status-gap">⬜ Accepted</span> — by-spec behavior</td></tr>
+      <tr><td><strong>H1</strong></td><td><code>PluginChain::process</code> uses <code>try_lock</code>, drops audio if contended</td><td><span class="status-wip">CRITICAL</span></td><td><span class="status-op">✓ Resolved</span> — lock-free snapshot model</td></tr>
+      <tr><td><strong>H2</strong></td><td><code>clap_host_request_resize</code> calls <code>gtk_window_resize</code> from any thread</td><td><span class="status-wip">HIGH</span></td><td><span class="status-wip">⚠ Pending</span> — dlog only, no dispatch</td></tr>
+      <tr><td><strong>H3</strong></td><td>No <code>clap.thread-check</code> provided</td><td><span class="status-wip">HIGH</span></td><td><span class="status-op">✓ Resolved</span></td></tr>
+      <tr><td><strong>H4</strong></td><td>GUI doesn't follow official order</td><td>MEDIUM</td><td><span class="status-gap">○ Pending</span></td></tr>
+      <tr><td><strong>H5</strong></td><td><code>gui->closed</code> is no-op</td><td>MEDIUM</td><td><span class="status-op">✓ Resolved</span></td></tr>
+      <tr><td><strong>H6</strong></td><td><code>clap_host_log</code> is empty</td><td>MEDIUM</td><td><span class="status-op">✓ Resolved</span></td></tr>
+      <tr><td><strong>H7</strong></td><td>Plugin scan without sandbox</td><td>MEDIUM</td><td><span class="status-gap">○ Pending</span></td></tr>
+      <tr><td><strong>H8</strong></td><td><code>init</code> + <code>activate</code> synchronous</td><td>LOW</td><td><span class="status-gap">○ Accepted</span> — by-spec</td></tr>
     </tbody>
   </table>
   </div>
@@ -675,27 +808,6 @@
   <span class="hl-b">plugin->destroy</span>()
   <span class="hl-b">ClapHost::unloadLibrary</span>(path) → <span class="c">// dlclose</span></pre>
 
-  <details>
-    <summary>Error handling contract (click to expand)</summary>
-    <div class="details-body">
-    <div class="table-wrap">
-    <table>
-      <thead><tr><th>Operation</th><th>Error response</th><th>Host action</th></tr></thead>
-      <tbody>
-        <tr><td><code>dlopen</code> fails</td><td><code>"false"</code> + log</td><td>Skip plugin, continue</td></tr>
-        <tr><td><code>entry->init</code> returns false</td><td><code>"false"</code> + log</td><td><code>destroy</code> + <code>dlclose</code></td></tr>
-        <tr><td><code>entry->init</code> crashes (SIGSEGV)</td><td>Plugin marked <code>failed</code></td><td>JS shows in red</td></tr>
-        <tr><td><code>activate</code> fails</td><td>log</td><td><code>destroy</code>, skip activation</td></tr>
-        <tr><td><code>gui->create</code> fails</td><td>log</td><td>Destroy GUI, continue</td></tr>
-        <tr><td><code>gui->set_parent</code> fails</td><td>log</td><td>Destroy GUI, continue</td></tr>
-        <tr><td><code>gui->show</code> fails</td><td>log</td><td>Destroy GUI, continue</td></tr>
-        <tr><td><code>plugin->process</code> returns <code>CLAP_PROCESS_ERROR</code></td><td>log + bypass</td><td>Plugin bypassed</td></tr>
-      </tbody>
-    </table>
-    </div>
-    </div>
-  </details>
-
   <div class="callout warn">
     <strong>Multi-port limitation:</strong> All ports share the same buffer
     (<code>kMaxPorts = 4</code>). Multi-output plugins produce incorrect
@@ -707,33 +819,29 @@
 <!-- ──────── ADRs ──────── -->
 <section class="section" id="adrs">
   <div class="section-head">
-    <span class="num">07</span>
-    <h2>Architecture Decision Records</h2>
-    <a class="section-anchor" href="#adrs" aria-label="Link to section">#</a>
+    <span class="num">09</span>
+    <h2>Architecture decisions</h2>
+    <a class="section-anchor" href="#adrs" aria-label="Link">#</a>
   </div>
-
-  <p>
-    All 13 ADRs from <code>DECISIONS.md</code>, chronologically ordered.
-    These record the rationale behind every significant architectural choice.
-  </p>
+  <p>All 13 ADRs from <code>DECISIONS.md</code>, chronologically ordered. These record the rationale behind every significant architectural choice.</p>
 
   <div class="table-wrap">
   <table>
-    <thead><tr><th>#</th><th>Decision</th><th>Context</th><th>Read more</th></tr></thead>
+    <thead><tr><th>#</th><th>Decision</th><th>Context</th></tr></thead>
     <tbody>
-      <tr><td><strong>ADR-000</strong></td><td>ADR format</td><td>Standardized lightweight ADR template with Context/Decision/Consequences</td><td>—</td></tr>
-      <tr><td><strong>ADR-001</strong></td><td>Modular architecture</td><td>Separate audio engine + UI thread with atomic shared state</td><td>→ <code>DECISIONS.md</code></td></tr>
-      <tr><td><strong>ADR-002</strong></td><td>miniaudio over RtAudio</td><td>Single-header, no deps, MIT license, ALSA/Pulse/JACK</td><td>→ <code>DECISIONS.md</code></td></tr>
-      <tr><td><strong>ADR-003</strong></td><td>ImGui + GLFW (superseded)</td><td>Original UI stack, replaced by ADR-009 (WebView)</td><td>→ <code>DECISIONS.md</code></td></tr>
-      <tr><td><strong>ADR-004</strong></td><td>Two-thread concurrency</td><td>Audio thread never blocks; atomics for all shared state</td><td>→ <code>DECISIONS.md</code></td></tr>
-      <tr><td><strong>ADR-005</strong></td><td>4-region layout</td><td>Timeline + File browser + FX Chain + Mixer</td><td>→ <code>DECISIONS.md</code></td></tr>
-      <tr><td><strong>ADR-006</strong></td><td>CLAP over VST3</td><td>Open standard, MIT license, no COM, simple dlopen on Linux</td><td>→ <code>DECISIONS.md</code></td></tr>
-      <tr><td><strong>ADR-007</strong></td><td><code>ma_decoder</code> + atomic playhead</td><td>WAV loading via miniaudio, lock-free transport state</td><td>→ <code>DECISIONS.md</code></td></tr>
-      <tr><td><strong>ADR-008</strong></td><td>Dynamic tracks + master bus</td><td><code>MAX_TRACKS=16</code>, atomic track count, MasterBus struct</td><td>→ <code>DECISIONS.md</code></td></tr>
-      <tr><td><strong>ADR-009</strong></td><td>ImGui/GLFW → WebView</td><td>Replaced with WebKit2GTK + HTML5+Tailwind+vanilla JS</td><td>→ <code>DECISIONS.md</code></td></tr>
-      <tr><td><strong>ADR-010</strong></td><td>Dark theme (Ableton-inspired)</td><td>High-contrast carbon + blue palette, WCAG AA, CSS custom properties</td><td>→ <code>DECISIONS.md</code></td></tr>
-      <tr><td><strong>ADR-011</strong></td><td>Multi-clip expansion</td><td>Snapshot model for clips, automation, MIDI, buses, freeze, undo</td><td>→ <code>DECISIONS.md</code></td></tr>
-      <tr><td><strong>ADR-012</strong></td><td>JSON telemetry over array-eval</td><td><code>JSON.parse()</code> avoids WebKitGTK JSC array bugs; generation counter</td><td>→ <code>DECISIONS.md</code></td></tr>
+      <tr><td><strong>ADR-000</strong></td><td>ADR format</td><td>Standardized lightweight ADR template with Context/Decision/Consequences</td></tr>
+      <tr><td><strong>ADR-001</strong></td><td>Modular architecture</td><td>Separate audio engine + UI thread with atomic shared state</td></tr>
+      <tr><td><strong>ADR-002</strong></td><td>miniaudio over RtAudio</td><td>Single-header, no deps, MIT license, ALSA/Pulse/JACK</td></tr>
+      <tr><td><strong>ADR-003</strong></td><td>ImGui + GLFW (superseded)</td><td>Original UI stack, replaced by ADR-009 (WebView)</td></tr>
+      <tr><td><strong>ADR-004</strong></td><td>Two-thread concurrency</td><td>Audio thread never blocks; atomics for all shared state</td></tr>
+      <tr><td><strong>ADR-005</strong></td><td>4-region layout</td><td>Timeline + File browser + FX Chain + Mixer</td></tr>
+      <tr><td><strong>ADR-006</strong></td><td>CLAP over VST3</td><td>Open standard, MIT license, no COM, simple dlopen on Linux</td></tr>
+      <tr><td><strong>ADR-007</strong></td><td><code>ma_decoder</code> + atomic playhead</td><td>WAV loading via miniaudio, lock-free transport state</td></tr>
+      <tr><td><strong>ADR-008</strong></td><td>Dynamic tracks + master bus</td><td><code>MAX_TRACKS=16</code>, atomic track count, MasterBus struct</td></tr>
+      <tr><td><strong>ADR-009</strong></td><td>ImGui/GLFW → WebView</td><td>Replaced with WebKit2GTK + HTML5+Tailwind+vanilla JS</td></tr>
+      <tr><td><strong>ADR-010</strong></td><td>Dark theme (Ableton-inspired)</td><td>High-contrast carbon + blue palette, WCAG AA, CSS custom properties</td></tr>
+      <tr><td><strong>ADR-011</strong></td><td>Multi-clip expansion</td><td>Snapshot model for clips, automation, MIDI, buses, freeze, undo</td></tr>
+      <tr><td><strong>ADR-012</strong></td><td>JSON telemetry over array-eval</td><td><code>JSON.parse()</code> avoids WebKitGTK JSC array bugs; generation counter</td></tr>
     </tbody>
   </table>
   </div>
@@ -750,38 +858,34 @@
 <!-- ──────── AUDIT ──────── -->
 <section class="section" id="audit">
   <div class="section-head">
-    <span class="num">08</span>
-    <h2>Audit &amp; implementation status</h2>
-    <a class="section-anchor" href="#audit" aria-label="Link to section">#</a>
+    <span class="num">10</span>
+    <h2>Audit &amp; status</h2>
+    <a class="section-anchor" href="#audit" aria-label="Link">#</a>
   </div>
-
-  <p>
-    Full audit from <code>AUDIT_ROADMAP.md</code> (2026-06-18).
-    Every feature classified by implementation state.
-  </p>
+  <p>Full audit from <code>AUDIT_ROADMAP.md</code> (2026-06-18). Every feature classified by implementation state.</p>
 
   <h3>Audio engine &amp; DSP</h3>
   <div class="table-wrap">
   <table>
     <thead><tr><th>Component</th><th>Status</th><th>Notes</th></tr></thead>
     <tbody>
-      <tr><td>miniaudio init</td><td><span class="status-op">✅</span></td><td>f32 stereo, 48 kHz, 256-frame blocks, 3 periods</td></tr>
-      <tr><td>Transport (play/pause/stop)</td><td><span class="status-op">✅</span></td><td>Atomic playing/playhead; auto-stop on track end</td></tr>
-      <tr><td>Per-track mixing</td><td><span class="status-op">✅</span></td><td>Volume, pan, mute, solo — all std::atomic</td></tr>
-      <tr><td>Peak meters</td><td><span class="status-op">✅</span></td><td>atomic peakL/R per track+master; pushed at 30 Hz</td></tr>
-      <tr><td>Per-track FX chain</td><td><span class="status-op">✅</span></td><td>Lock-free snapshot model</td></tr>
-      <tr><td>Master FX chain</td><td><span class="status-op">✅</span></td><td>PeakEater pre-loaded as soft clipper</td></tr>
-      <tr><td>WAV loading</td><td><span class="status-op">✅</span></td><td>Synchronous (loadWavToTrack)</td></tr>
-      <tr><td>Multi-clip per track</td><td><span class="status-op">✅</span></td><td>Primary + extras via atomic ClipsSnapshot*</td></tr>
-      <tr><td>Split / Trim / Fade</td><td><span class="status-op">✅</span></td><td>Atomic fade samples on Clip struct</td></tr>
-      <tr><td>Loop / Punch</td><td><span class="status-op">✅</span></td><td>Atomic loop start/end, auto-wrap</td></tr>
-      <tr><td>Audio recording</td><td><span class="status-op">✅</span></td><td>Circular buffer per track, async WAV flush</td></tr>
-      <tr><td>Buses / Sends</td><td><span class="status-op">✅</span></td><td>Matrix mixer with atomic routing snapshot</td></tr>
-      <tr><td>Automation</td><td><span class="status-op">✅</span></td><td>Binary search in process(); atomic snapshots</td></tr>
-      <tr><td>Track freeze</td><td><span class="status-op">✅</span></td><td>Offline render; atomic frozen flag</td></tr>
-      <tr><td>PDC (latency comp)</td><td><span class="status-op">✅</span></td><td>Rotating DelayLine per track + master</td></tr>
-      <tr><td>Offline render (export)</td><td><span class="status-op">✅</span></td><td>Full-project mixdown</td></tr>
-      <tr><td>Deferred buffer delete</td><td><span class="status-op">✅</span></td><td>UAF prevention via queueAudioBufferDelete</td></tr>
+      <tr><td>miniaudio init</td><td><span class="status-op">✓</span></td><td>f32 stereo, 48 kHz, 256-frame blocks, 3 periods</td></tr>
+      <tr><td>Transport (play/pause/stop)</td><td><span class="status-op">✓</span></td><td>Atomic playing/playhead; auto-stop on track end</td></tr>
+      <tr><td>Per-track mixing</td><td><span class="status-op">✓</span></td><td>Volume, pan, mute, solo — all std::atomic</td></tr>
+      <tr><td>Peak meters</td><td><span class="status-op">✓</span></td><td>atomic peakL/R per track+master; pushed at 30 Hz</td></tr>
+      <tr><td>Per-track FX chain</td><td><span class="status-op">✓</span></td><td>Lock-free snapshot model</td></tr>
+      <tr><td>Master FX chain</td><td><span class="status-op">✓</span></td><td>PeakEater pre-loaded as soft clipper</td></tr>
+      <tr><td>WAV loading</td><td><span class="status-op">✓</span></td><td>Synchronous (loadWavToTrack)</td></tr>
+      <tr><td>Multi-clip per track</td><td><span class="status-op">✓</span></td><td>Primary + extras via atomic ClipsSnapshot*</td></tr>
+      <tr><td>Split / Trim / Fade</td><td><span class="status-op">✓</span></td><td>Atomic fade samples on Clip struct</td></tr>
+      <tr><td>Loop / Punch</td><td><span class="status-op">✓</span></td><td>Atomic loop start/end, auto-wrap</td></tr>
+      <tr><td>Audio recording</td><td><span class="status-op">✓</span></td><td>Circular buffer per track, async WAV flush</td></tr>
+      <tr><td>Buses / Sends</td><td><span class="status-op">✓</span></td><td>Matrix mixer with atomic routing snapshot</td></tr>
+      <tr><td>Automation</td><td><span class="status-op">✓</span></td><td>Binary search in process(); atomic snapshots</td></tr>
+      <tr><td>Track freeze</td><td><span class="status-op">✓</span></td><td>Offline render; atomic frozen flag</td></tr>
+      <tr><td>PDC (latency comp)</td><td><span class="status-op">✓</span></td><td>Rotating DelayLine per track + master</td></tr>
+      <tr><td>Offline render (export)</td><td><span class="status-op">✓</span></td><td>Full-project mixdown</td></tr>
+      <tr><td>Deferred buffer delete</td><td><span class="status-op">✓</span></td><td>UAF prevention via queueAudioBufferDelete</td></tr>
     </tbody>
   </table>
   </div>
@@ -791,13 +895,13 @@
   <table>
     <thead><tr><th>Component</th><th>Status</th><th>Notes</th></tr></thead>
     <tbody>
-      <tr><td>JSON save</td><td><span class="status-op">✅</span></td><td>nlohmann/json v3.11.3 via FetchContent</td></tr>
-      <tr><td>JSON load</td><td><span class="status-op">✅</span></td><td>Strict Sequential Hydration: stop→drain→parse→rebuild→notify→start</td></tr>
-      <tr><td>Atomic write</td><td><span class="status-op">✅</span></td><td>.tmp → rename()</td></tr>
-      <tr><td>Base64 for blobs</td><td><span class="status-op">✅</span></td><td>RFC 4648, header-only</td></tr>
-      <tr><td>WAV 16-bit PCM export</td><td><span class="status-op">✅</span></td><td>clamp [-1,1], scale 32767</td></tr>
-      <tr><td>WAV 32-bit float export</td><td><span class="status-op">✅</span></td><td>Raw float32 write</td></tr>
-      <tr><td>Async export</td><td><span class="status-op">✅</span></td><td>Detached thread + onExportDone callback</td></tr>
+      <tr><td>JSON save</td><td><span class="status-op">✓</span></td><td>nlohmann/json v3.11.3 via FetchContent</td></tr>
+      <tr><td>JSON load</td><td><span class="status-op">✓</span></td><td>Strict Sequential Hydration: stop→drain→parse→rebuild→notify→start</td></tr>
+      <tr><td>Atomic write</td><td><span class="status-op">✓</span></td><td>.tmp → rename()</td></tr>
+      <tr><td>Base64 for blobs</td><td><span class="status-op">✓</span></td><td>RFC 4648, header-only</td></tr>
+      <tr><td>WAV 16-bit PCM export</td><td><span class="status-op">✓</span></td><td>clamp [-1,1], scale 32767</td></tr>
+      <tr><td>WAV 32-bit float export</td><td><span class="status-op">✓</span></td><td>Raw float32 write</td></tr>
+      <tr><td>Async export</td><td><span class="status-op">✓</span></td><td>Detached thread + onExportDone callback</td></tr>
     </tbody>
   </table>
   </div>
@@ -807,9 +911,9 @@
   <table>
     <thead><tr><th>Component</th><th>Status</th><th>Notes</th></tr></thead>
     <tbody>
-      <tr><td>Note storage</td><td><span class="status-op">✅</span></td><td>MidiNote struct, sorted by start</td></tr>
-      <tr><td>clap_note_ports</td><td><span class="status-op">✅</span></td><td>note-on/note-off events in process()</td></tr>
-      <tr><td>Piano roll UI</td><td><span class="status-gap">⬜</span></td><td>MIDI storage works; no graphical editor</td></tr>
+      <tr><td>Note storage</td><td><span class="status-op">✓</span></td><td>MidiNote struct, sorted by start</td></tr>
+      <tr><td>clap_note_ports</td><td><span class="status-op">✓</span></td><td>note-on/note-off events in process()</td></tr>
+      <tr><td>Piano roll UI</td><td><span class="status-gap">○</span></td><td>MIDI storage works; no graphical editor</td></tr>
     </tbody>
   </table>
   </div>
@@ -828,11 +932,10 @@
 <!-- ──────── ROADMAP ──────── -->
 <section class="section" id="roadmap">
   <div class="section-head">
-    <span class="num">09</span>
+    <span class="num">11</span>
     <h2>Roadmap</h2>
-    <a class="section-anchor" href="#roadmap" aria-label="Link to section">#</a>
+    <a class="section-anchor" href="#roadmap" aria-label="Link">#</a>
   </div>
-
   <ul class="timeline">
     <li class="done">
       <h3>v0.1 — Core</h3>
@@ -865,65 +968,46 @@
       <span class="meta">future</span>
     </li>
   </ul>
-
-  <details>
-    <summary>Phase-by-phase implementation plan (from ROADMAP.md)</summary>
-    <div class="details-body">
-    <table>
-      <thead><tr><th>Phase</th><th>Focus</th><th>Key deliverables</th></tr></thead>
-      <tbody>
-        <tr><td><strong>A</strong></td><td>Core engine</td><td>miniaudio, transport, tracks, mixer, WAV, CLAP host</td></tr>
-        <tr><td><strong>B</strong></td><td>Editing &amp; workflow</td><td>Multi-clip, split/trim/fade, loop/punch, undo/redo, drag/drop</td></tr>
-        <tr><td><strong>C</strong></td><td>Advanced features</td><td>Recording, automation, buses/sends, freeze, MIDI, export, persistence</td></tr>
-      </tbody>
-    </table>
-    </div>
-  </details>
 </section>
 
 <!-- ──────── CONTRIBUTING ──────── -->
 <section class="section" id="contributing">
   <div class="section-head">
-    <span class="num">10</span>
+    <span class="num">12</span>
     <h2>Contributing</h2>
-    <a class="section-anchor" href="#contributing" aria-label="Link to section">#</a>
+    <a class="section-anchor" href="#contributing" aria-label="Link">#</a>
   </div>
-
-  <p>
-    Hydraw is <strong>one engineer on weekends</strong>. Every PR, bug report,
-    documentation improvement, and plugin test moves the needle. No NDA,
-    no CLA, no design committee.
-  </p>
+  <p>Hydraw is <strong>one engineer on weekends</strong>. Every PR, bug report, documentation improvement, and plugin test moves the needle. No NDA, no CLA, no design committee.</p>
 
   <h3>Good first contributions</h3>
   <div class="card-grid">
-    <div class="card">
-      <span class="card-num">Engine · C++17</span>
+    <div class="card card-blue">
+      <span class="card-num">engine · C++17</span>
       <h3>Audio &amp; DSP</h3>
       <p>The engine in <code>src/AudioEngine.cpp</code>. Recording buffers, automation interpolation, PDC edge cases.</p>
       <ul class="tags"><li>lock-free atomics</li><li>miniaudio</li><li>PCM buffers</li></ul>
     </div>
-    <div class="card">
-      <span class="card-num">Host · CLAP</span>
+    <div class="card card-green">
+      <span class="card-num">host · CLAP</span>
       <h3>Plugin hosting</h3>
       <p><code>src/Plugin/</code> — thin dlopen wrapper. Fix H2 (thread-safe resize), H4 (GUI order), H7 (sandbox).</p>
       <ul class="tags"><li>CLAP 1.2 spec</li><li>per-track FX</li><li>testing CLAPs</li></ul>
     </div>
-    <div class="card">
-      <span class="card-num">UI · HTML + JS</span>
+    <div class="card card-yellow">
+      <span class="card-num">ui · HTML + JS</span>
       <h3>Web UI &amp; bindings</h3>
       <p><code>assets/index.html</code> — ~3K lines of Tailwind+vanilla JS. Piano roll, automation editor, zoom controls.</p>
       <ul class="tags"><li>HTML5</li><li>Canvas</li><li>no build step</li></ul>
     </div>
-    <div class="card">
-      <span class="card-num">QA · Docs</span>
+    <div class="card card-magenta">
+      <span class="card-num">qa · docs</span>
       <h3>Testing &amp; documentation</h3>
       <p>Run on weird distros, file issues with <code>journalctl</code>, write tutorials, ship sample packs.</p>
       <ul class="tags"><li>Arch, Fedora, Nix</li><li>markdown</li><li>WAV fixtures</li></ul>
     </div>
   </div>
 
-  <h3>Quick reference</h3>
+  <h3>Where things live</h3>
   <div class="table-wrap">
   <table>
     <thead><tr><th>What</th><th>Where</th><th>Language</th></tr></thead>
@@ -958,11 +1042,10 @@
 <!-- ──────── LIMITATIONS ──────── -->
 <section class="section" id="limitations">
   <div class="section-head">
-    <span class="num">11</span>
+    <span class="num">13</span>
     <h2>Known limitations</h2>
-    <a class="section-anchor" href="#limitations" aria-label="Link to section">#</a>
+    <a class="section-anchor" href="#limitations" aria-label="Link">#</a>
   </div>
-
   <div class="table-wrap">
   <table>
     <thead><tr><th>Limitation</th><th>Severity</th><th>Future direction</th></tr></thead>
@@ -992,23 +1075,20 @@
 
 <!-- ──────── CREDITS ──────── -->
 <section class="section" style="border-bottom:none;">
-  <p style="font-size:14px;color:var(--text-dim);line-height:1.6;max-width:800px;border-top:1px solid var(--line);padding-top:24px;">
-    <strong>Credits.</strong> Hydraw DAW is MIT-licensed. Built on
-    <a href="https://miniaud.io" target="_blank" rel="noopener">miniaudio</a>
-    (David Reid, MIT),
-    <a href="https://github.com/webview/webview" target="_blank" rel="noopener">webview/webview</a>
-    (MIT),
-    <a href="https://cleveraudio.org" target="_blank" rel="noopener">CLAP</a>
-    (MIT), and
-    <a href="https://github.com/nlohmann/json" target="_blank" rel="noopener">nlohmann/json</a>
-    (MIT).
-    <a href="https://github.com/vvvar/PeakEater" target="_blank" rel="noopener">PeakEater</a>
-    (Vladimir V., GPL‑3.0) ships as the default master soft-clipper.
-    <br/><br/>
-    © 2026 Hydraw Contributors.
-    <a href="https://github.com/juanpimg/Hydraw-DAW" target="_blank" rel="noopener">GitHub</a> ·
-    <a href="https://github.com/juanpimg/Hydraw-DAW/issues" target="_blank" rel="noopener">Issues</a> ·
-    MIT
+  <div class="section-head">
+    <span class="num">★</span>
+    <h2>Credits</h2>
+  </div>
+  <p style="font-size:14.5px;color:var(--text-dim);line-height:1.65;max-width:80ch;">
+    Hydraw DAW is MIT-licensed. Built on
+    <a href="https://miniaud.io" target="_blank" rel="noopener">miniaudio</a> (David Reid, MIT),
+    <a href="https://github.com/webview/webview" target="_blank" rel="noopener">webview/webview</a> (MIT),
+    <a href="https://cleveraudio.org" target="_blank" rel="noopener">CLAP</a> (MIT), and
+    <a href="https://github.com/nlohmann/json" target="_blank" rel="noopener">nlohmann/json</a> (MIT).
+    <a href="https://github.com/vvvar/PeakEater" target="_blank" rel="noopener">PeakEater</a> (Vladimir V., GPL‑3.0) ships as the default master soft-clipper.
+  </p>
+  <p style="font-size:12.5px;color:var(--text-mute);margin-top:24px;">
+    © 2026 Hydraw Contributors · <a href="https://github.com/juanpimg/Hydraw-DAW" target="_blank" rel="noopener">GitHub</a> · <a href="https://github.com/juanpimg/Hydraw-DAW/issues" target="_blank" rel="noopener">Issues</a> · MIT
   </p>
 </section>
 
