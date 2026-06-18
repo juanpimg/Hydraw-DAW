@@ -1,106 +1,150 @@
-/* Hydraw DAW landing page — small interactions only. */
-
-(() => {
+(function () {
   'use strict';
 
-  /* ---------- spectrum bars ---------- */
-  const spectrum = document.getElementById('spectrum');
-  if (spectrum) {
-    const BARS = 96;
-    const frag = document.createDocumentFragment();
-    const colors = ['#5599ff', '#66ddff', '#44bb66', '#eebb44', '#ee4444'];
-    for (let i = 0; i < BARS; i++) {
-      const s = document.createElement('span');
-      const t = i / (BARS - 1);
-      const colorIdx = Math.min(colors.length - 1, Math.floor(t * colors.length));
-      s.style.setProperty('--bar-color', colors[colorIdx]);
-      s.style.setProperty('--h', `${20 + Math.random() * 70}%`);
-      s.style.setProperty('--d', `${0.6 + Math.random() * 1.2}s`);
-      s.style.setProperty('--dl', `${Math.random() * -2}s`);
-      frag.appendChild(s);
-    }
-    spectrum.appendChild(frag);
-  }
-
-  /* ---------- oscilloscope path ---------- */
-  const scopePath = document.getElementById('scopePath');
-  if (scopePath) {
-    let raf = 0;
-    const W = 200, H = 80, MID = 40;
-    let phase = 0;
-    const draw = () => {
-      phase += 0.06;
-      let d = `M0,${MID}`;
-      for (let x = 0; x <= W; x += 2) {
-        const t = x / W;
-        const env = Math.sin(t * Math.PI) ** 1.4;
-        const wob = Math.sin(t * 12 + phase) * 0.4
-                  + Math.sin(t * 31 + phase * 1.7) * 0.25
-                  + Math.sin(t * 67 + phase * 0.6) * 0.15
-                  + (Math.random() - 0.5) * 0.4;
-        const y = MID + wob * env * (MID * 0.85);
-        d += ` L${x.toFixed(1)},${y.toFixed(1)}`;
+  /* ─── copy to clipboard ─── */
+  document.querySelectorAll('.copy').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      var txt = btn.getAttribute('data-copy') || '';
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(txt).catch(function () { fallbackCopy(txt); });
+      } else {
+        fallbackCopy(txt);
       }
-      scopePath.setAttribute('d', d);
-      raf = requestAnimationFrame(draw);
-    };
-    draw();
-    document.addEventListener('visibilitychange', () => {
-      if (document.hidden) cancelAnimationFrame(raf);
-      else draw();
-    });
-  }
-
-  /* ---------- copy to clipboard ---------- */
-  document.querySelectorAll('.copy').forEach(btn => {
-    btn.addEventListener('click', async () => {
-      const txt = btn.getAttribute('data-copy') || '';
-      try {
-        await navigator.clipboard.writeText(txt);
-      } catch {
-        const ta = document.createElement('textarea');
-        ta.value = txt; document.body.appendChild(ta);
-        ta.select(); document.execCommand('copy'); ta.remove();
-      }
-      const orig = btn.textContent;
-      btn.textContent = 'copied';
+      var orig = btn.textContent;
+      btn.textContent = 'copied!';
       btn.classList.add('copied');
-      setTimeout(() => {
+      setTimeout(function () {
         btn.textContent = orig;
         btn.classList.remove('copied');
-      }, 1400);
+      }, 1200);
     });
   });
 
-  /* ---------- scroll reveal ---------- */
-  const reveals = document.querySelectorAll(
-    '.section-head, .feature, .contrib, .install-steps li, .tl, .arch-wrap, .mockup, .credits, .arch-note, .dropcap'
-  );
-  reveals.forEach(el => el.classList.add('reveal'));
+  function fallbackCopy(str) {
+    var ta = document.createElement('textarea');
+    ta.value = str;
+    ta.style.position = 'fixed';
+    ta.style.left = '-9999px';
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand('copy'); } catch (e) {}
+    document.body.removeChild(ta);
+  }
 
-  if ('IntersectionObserver' in window) {
-    const io = new IntersectionObserver((entries) => {
-      entries.forEach(e => {
-        if (e.isIntersecting) {
-          e.target.classList.add('in');
-          io.unobserve(e.target);
-        }
+  /* ─── terminal copy on click anywhere in term with data-copy ─── */
+  document.querySelectorAll('.term[data-copy]').forEach(function (term) {
+    term.addEventListener('click', function (e) {
+      if (e.target.closest('.copy')) return;
+      var btn = term.querySelector('.copy');
+      if (btn) btn.click();
+    });
+  });
+
+  /* ─── sidebar scrollspy ─── */
+  var sections = document.querySelectorAll('.section, .hero-banner');
+  var navLinks = document.querySelectorAll('.sidebar-nav a[data-section]');
+  var sidebar = document.querySelector('.sidebar');
+  var currentSection = '';
+
+  function updateActiveLink() {
+    var scrollY = window.scrollY;
+    var found = '';
+    var offset = 120;
+
+    sections.forEach(function (sec) {
+      if (!sec.id) return;
+      var top = sec.offsetTop;
+      var height = sec.offsetHeight;
+      if (scrollY >= top - offset && scrollY < top + height - offset) {
+        found = sec.id;
+      }
+    });
+
+    if (found !== currentSection) {
+      currentSection = found;
+      navLinks.forEach(function (a) {
+        a.classList.toggle('active', a.getAttribute('data-section') === found);
       });
-    }, { threshold: 0.12, rootMargin: '0px 0px -40px 0px' });
-    reveals.forEach(el => io.observe(el));
-  } else {
-    reveals.forEach(el => el.classList.add('in'));
+    }
   }
 
-  /* ---------- topbar contrast on scroll ---------- */
-  const topbar = document.querySelector('.topbar');
-  if (topbar) {
-    const onScroll = () => {
-      topbar.style.boxShadow = window.scrollY > 8
-        ? '0 1px 0 var(--line) inset, 0 8px 24px -16px rgba(0,0,0,0.6)'
-        : 'none';
-    };
-    onScroll();
-    window.addEventListener('scroll', onScroll, { passive: true });
+  window.addEventListener('scroll', updateActiveLink, { passive: true });
+  window.addEventListener('resize', updateActiveLink, { passive: true });
+  updateActiveLink();
+
+  /* ─── smooth click-to-nav with active highlight ─── */
+  navLinks.forEach(function (a) {
+    a.addEventListener('click', function (e) {
+      var href = a.getAttribute('href');
+      if (!href || href === '#') return;
+      var target = document.querySelector(href);
+      if (!target) return;
+
+      e.preventDefault();
+
+      var y = target.getBoundingClientRect().top + window.scrollY - 90;
+      window.scrollTo({ top: y, behavior: 'smooth' });
+
+      navLinks.forEach(function (l) { l.classList.remove('active'); });
+      a.classList.add('active');
+      currentSection = a.getAttribute('data-section') || '';
+    });
+  });
+
+  /* ─── details / collapse animation ─── */
+  document.querySelectorAll('details').forEach(function (d) {
+    d.addEventListener('toggle', function () {
+      // details element already toggles natively; no extra work needed
+    });
+  });
+
+  /* ─── section anchor click to copy URL ─── */
+  document.querySelectorAll('.section-anchor').forEach(function (a) {
+    a.addEventListener('click', function (e) {
+      e.preventDefault();
+      var href = a.getAttribute('href');
+      if (!href) return;
+
+      if (history.pushState) {
+        history.pushState(null, '', href);
+      }
+      // smooth scroll to the section
+      var target = document.querySelector(href);
+      if (target) {
+        var y = target.getBoundingClientRect().top + window.scrollY - 90;
+        window.scrollTo({ top: y, behavior: 'smooth' });
+      }
+
+      // Copy URL to clipboard
+      var url = window.location.origin + window.location.pathname + href;
+      if (navigator.clipboard) {
+        navigator.clipboard.writeText(url).catch(function () {});
+      }
+    });
+  });
+
+  /* ─── keyboard shortcut: cmd+k / ctrl+k to focus search? skip for now ─── */
+
+  /* ─── initial page load: if URL has hash, scroll to it ─── */
+  if (window.location.hash) {
+    var hashTarget = document.querySelector(window.location.hash);
+    if (hashTarget) {
+      setTimeout(function () {
+        var y = hashTarget.getBoundingClientRect().top + window.scrollY - 90;
+        window.scrollTo({ top: y, behavior: 'smooth' });
+      }, 200);
+    }
   }
+
+  /* ─── sidebar active on load ─── */
+  var initialHash = window.location.hash.replace('#', '');
+  if (initialHash) {
+    navLinks.forEach(function (a) {
+      a.classList.toggle('active', a.getAttribute('data-section') === initialHash);
+    });
+  } else {
+    var first = document.querySelector('.sidebar-nav a[data-section]');
+    if (first) first.classList.add('active');
+  }
+
 })();
